@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Download, Bookmark, BookmarkCheck, ChevronRight, RefreshCw } from 'lucide-react';
+import { Calendar, Download, Bookmark, BookmarkCheck, ChevronRight, RefreshCw, AlertTriangle, X } from 'lucide-react';
 import Chart from 'chart.js/auto';
 import { generateHealthReportPDF } from '../utils/pdfGenerator';
 import ParameterDrawer from './ParameterDrawer';
@@ -10,13 +10,20 @@ const MONTH_NAMES = [
 ];
 
 export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReload }) {
-  const { clientName, month, year, scores, metrics, rating, badgeColor, badgeText, ratingBand, insights, solutions, escalationCount } = scoreData;
+  const { clientName, month, year, scores, metrics, rating, badgeColor, badgeText, ratingBand, insights, solutions, escalationCount, pendingLargeJobs } = scoreData;
   const monthName = MONTH_NAMES[month];
 
   const [isSaved, setIsSaved] = useState(false);
   const [openParam, setOpenParam] = useState(null);
   const [priorityModal, setPriorityModal] = useState(null);
   const [solutionsOpen, setSolutionsOpen] = useState(false);
+  const [isBannerDismissed, setIsBannerDismissed] = useState(false);
+  const [showPendingJobsModal, setShowPendingJobsModal] = useState(false);
+
+  useEffect(() => {
+    setIsBannerDismissed(false);
+    setShowPendingJobsModal(false);
+  }, [clientName]);
 
   const statusCanvasRef = useRef(null);
   const priorityCanvasRef = useRef(null);
@@ -478,6 +485,80 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
 
   return (
     <div className="score-screen">
+      {/* Pending XL/XXL Jobs Floating Notification & Modal */}
+      {pendingLargeJobs && pendingLargeJobs.length > 0 && !isBannerDismissed && (
+        <>
+          <div 
+            className="pending-jobs-floating-badge" 
+            onClick={() => setShowPendingJobsModal(true)}
+          >
+            <div className="badge-pulse-icon">
+              <AlertTriangle size={16} style={{ color: '#d97706' }} />
+            </div>
+            <span style={{ fontWeight: 600 }}>
+              Attention: {pendingLargeJobs.length} High-Priority Job{pendingLargeJobs.length !== 1 ? 's' : ''} (XL/XXL) Pending
+            </span>
+            <button 
+              className="badge-close-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsBannerDismissed(true);
+              }}
+              title="Dismiss"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          {showPendingJobsModal && (
+            <div className="modal-overlay" onClick={() => setShowPendingJobsModal(false)}>
+              <div className="premium-modal-card" onClick={(e) => e.stopPropagation()}>
+                <div className="modal-header">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <AlertTriangle style={{ color: '#d97706' }} size={20} />
+                    <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700 }}>Pending High-Priority Jobs</h3>
+                  </div>
+                  <button className="modal-close-icon-btn" onClick={() => setShowPendingJobsModal(false)}>
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="modal-body">
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1.25rem', lineHeight: 1.5 }}>
+                    Below are the active XL and XXL jobs currently pending for <strong>{clientName}</strong>.
+                  </p>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="premium-jobs-table">
+                      <thead>
+                        <tr>
+                          <th>Job ID</th>
+                          <th>Deliverable</th>
+                          <th>Priority</th>
+                          <th>Due Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingLargeJobs.map(job => (
+                          <tr key={job.jobId}>
+                            <td className="job-id-cell">{job.jobId}</td>
+                            <td className="deliverable-cell">{job.deliverable}</td>
+                            <td>
+                              <span className={`priority-badge-${job.priority.toLowerCase()} size-badge`}>
+                                {job.priority}
+                              </span>
+                            </td>
+                            <td className="due-date-cell">{job.dueDate}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
       {/* Results Header */}
       <div className="glass-card" style={{ marginBottom: '2.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>

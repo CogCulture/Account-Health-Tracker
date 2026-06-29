@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link2, HeartPulse, Plus, Trash2, Check, Pencil } from 'lucide-react';
 
-const STORAGE_KEY = 'client_health_sheet_pairs';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
 function extractSheetId(input) {
   const trimmed = (input || '').trim();
@@ -9,39 +9,6 @@ function extractSheetId(input) {
   if (match) return match[1];
   if (/^[a-zA-Z0-9-_]{20,}$/.test(trimmed)) return trimmed;
   return null;
-}
-
-// ── Storage helpers ───────────────────────────────────────────────────────────
-
-export function loadPairs() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-    // Migrate from old single-pair format
-    const oldRaw = localStorage.getItem('client_health_sheet_ids');
-    if (oldRaw) {
-      const old = JSON.parse(oldRaw);
-      const migrated = [{ id: '1', name: 'Default', dailyId: old.dailyId, jobId: old.jobId, active: true }];
-      savePairs(migrated);
-      return migrated;
-    }
-    return [];
-  } catch { return []; }
-}
-
-export function savePairs(pairs) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(pairs));
-}
-
-export function getActivePair() {
-  const pairs = loadPairs();
-  return pairs.find(p => p.active) || pairs[0] || null;
-}
-
-export function getActivePairs() {
-  const pairs = loadPairs();
-  const active = pairs.filter(p => p.active);
-  return active.length > 0 ? active : (pairs[0] ? [pairs[0]] : []);
 }
 
 // ── Pair form ─────────────────────────────────────────────────────────────────
@@ -106,48 +73,96 @@ function PairForm({ initial, onSave, onCancel }) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function SheetSetup({ open, onClose, onPairsChanged }) {
-  const [pairs,     setPairs]     = useState(loadPairs);
+  const [pairs,     setPairs]     = useState([]);
   const [adding,    setAdding]    = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const persist = (updated) => { savePairs(updated); setPairs(updated); onPairsChanged(updated.filter(p => p.active)); };
-
-  const handleAdd = ({ name, dailyId, jobId }) => {
-    const id      = Date.now().toString();
-    const isFirst = pairs.length === 0;
-    const updated = [...pairs, { id, name, dailyId, jobId, active: isFirst }];
-    persist(updated);
-    setAdding(false);
-  };
-
-  const handleEdit = (id, { name, dailyId, jobId }) => {
-    const updated = pairs.map(p => p.id === id ? { ...p, name, dailyId, jobId } : p);
-    persist(updated);
-    setEditingId(null);
-  };
-
-  const handleDelete = (id) => {
-    let updated = pairs.filter(p => p.id !== id);
-    // ensure at least one active if possible
-    if (updated.length > 0 && !updated.find(p => p.active)) {
-      updated[0] = { ...updated[0], active: true };
+  const fetchTeams = async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/teams`);
+      const data = await res.json();
+      setPairs(data.teams || []);
+    } catch (err) {
+      console.error('Failed to fetch teams:', err);
+    } finally {
+      setIsLoading(false);
     }
-    persist(updated);
   };
 
-  const handleToggleActive = (id) => {
-    const target  = pairs.find(p => p.id === id);
+  useEffect(() => {
+    fetchTeams();
+  }, [open]);
+
+  const handleAdd = async ({ name, dailyId, jobId }) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/teams`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, dailyId, jobId }),
+      });
+      const data = await res.json();
+      setPairs(data.teams);
+      onPairsChanged(data.teams.filter(t => t.active));
+      setAdding(false);
+    } catch (err) {
+      console.error('Failed to add team:', err);
+    }
+  };
+
+  const handleEdit = async (id, { name, dailyId, jobId }) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/teams`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, name, dailyId, jobId }),
+      });
+      const data = await res.json();
+      setPairs(data.teams);
+      onPairsChanged(data.teams.filter(t => t.active));
+      setEditingId(null);
+    } catch (err) {
+      console.error('Failed to edit team:', err);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/teams/${id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      setPairs(data.teams);
+      onPairsChanged(data.teams.filter(t => t.active));
+    } catch (err) {
+      console.error('Failed to delete team:', err);
+    }
+  };
+
+  const handleToggleActive = async (id) => {
+    const target = pairs.find(p => p.id === id);
     const activeCount = pairs.filter(p => p.active).length;
-    // Prevent deactivating last active pair
     if (target.active && activeCount === 1) return;
-    const updated = pairs.map(p => p.id === id ? { ...p, active: !p.active } : p);
-    persist(updated);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/teams`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...target, active: !target.active }),
+      });
+      const data = await res.json();
+      setPairs(data.teams);
+      onPairsChanged(data.teams.filter(t => t.active));
+    } catch (err) {
+      console.error('Failed to toggle active state:', err);
+    }
   };
 
   const handleClose = () => { setAdding(false); setEditingId(null); onClose(); };
 
-  // First-run: no pairs at all → full-screen onboarding
-  if (pairs.length === 0) {
+  // First-run: no teams at all → full-screen onboarding
+  if (!isLoading && pairs.length === 0) {
     return (
       <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }}>
         <div style={{ width: '100%', maxWidth: '480px', background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 16, padding: '2rem', boxShadow: '0 24px 60px rgba(0,0,0,0.5)' }}>
@@ -159,13 +174,7 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
           <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
             Add your first team sheets. You can add more teams later from the sidebar.
           </p>
-          <PairForm onSave={(data) => {
-            const id = Date.now().toString();
-            const updated = [{ id, ...data, active: true }];
-            savePairs(updated);
-            setPairs(updated);
-            onPairsChanged(updated);
-          }} />
+          <PairForm onSave={handleAdd} />
         </div>
       </div>
     );

@@ -3,23 +3,16 @@ import ClientSidebar from './components/ClientSidebar';
 import ScoreScreen from './components/ScoreScreen';
 import HistoryView from './components/HistoryView';
 import ErrorModal from './components/ErrorModal';
-import SheetSetup, { loadPairs, getActivePairs } from './components/SheetSetup';
+import SheetSetup from './components/SheetSetup';
 import { fetchSheetData, fetchSheetTabs } from './utils/sheetsApi';
 import { parseDailyTrackerRows, parseJobTrackerRows, getCommonClientTabs } from './utils/sheetsParser';
 import { calculateHealthScore } from './utils/scoreEngine';
 import { RefreshCw, BarChart3, Settings } from 'lucide-react';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+
 export default function App() {
-  // Active pairs from localStorage
-  const [activePairs, setActivePairs] = useState(() => {
-    const pairs = getActivePairs();
-    if (pairs.length > 0) return pairs;
-    // Fallback: env vars
-    const envDaily = import.meta.env.VITE_DAILY_SHEET_ID;
-    const envJob   = import.meta.env.VITE_JOB_SHEET_ID;
-    if (envDaily && envJob) return [{ id: 'env', name: 'Default', dailyId: envDaily, jobId: envJob, active: true }];
-    return [];
-  });
+  const [activePairs, setActivePairs] = useState([]);
 
   const [showSetup, setShowSetup] = useState(false);
 
@@ -48,6 +41,34 @@ export default function App() {
 
   // View: 'dashboard' | 'history'
   const [view, setView] = useState('dashboard');
+
+  // Load active teams from backend on startup
+  useEffect(() => {
+    const fetchActiveTeams = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/teams`);
+        const data = await res.json();
+        const active = data.teams.filter(t => t.active);
+        
+        if (active.length > 0) {
+          setActivePairs(active);
+        } else {
+          const envDaily = import.meta.env.VITE_DAILY_SHEET_ID;
+          const envJob   = import.meta.env.VITE_JOB_SHEET_ID;
+          if (envDaily && envJob) {
+            setActivePairs([{ id: 'env', name: 'Default', dailyId: envDaily, jobId: envJob, active: true }]);
+          } else {
+            setLoadStatus('loaded');
+            setShowSetup(true);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch active teams:', err);
+        setLoadStatus('error');
+      }
+    };
+    fetchActiveTeams();
+  }, []);
   // ── Load client tabs list ────────────────────────────────────────────────
   const loadClients = useCallback(async () => {
     if (!activePairs.length) return;

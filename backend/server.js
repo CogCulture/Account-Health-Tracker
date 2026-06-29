@@ -2,9 +2,11 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { google } from 'googleapis';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
+import cron from 'node-cron';
+import { runScheduledAlertCheck } from './alertEngine.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -18,8 +20,10 @@ const allowedOrigins = process.env.CORS_ORIGIN
 
 app.use(cors({
   origin: allowedOrigins,
-  methods: ['GET'],
+  methods: ['GET', 'POST', 'DELETE'],
 }));
+
+app.use(express.json());
 
 
 // ── Google Auth via Service Account ─────────────────────────────────────────
@@ -111,6 +115,106 @@ app.get('/api/sheets/data', async (req, res) => {
  */
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ── Teams CRUD Configuration API ──────────────────────────────────────────────
+const TEAMS_PATH = resolve(__dirname, 'teams.json');
+
+function loadTeams() {
+  try {
+    if (existsSync(TEAMS_PATH)) {
+      return JSON.parse(readFileSync(TEAMS_PATH, 'utf8'));
+    }
+  } catch (err) {
+    console.error('[server] Failed to load teams.json:', err.message);
+  }
+  return [];
+}
+
+function saveTeams(teams) {
+  try {
+    writeFileSync(TEAMS_PATH, JSON.stringify(teams, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[server] Failed to save teams.json:', err.message);
+  }
+}
+
+/**
+ * GET /api/teams
+ * Returns the list of teams.
+ */
+app.get('/api/teams', (_req, res) => {
+  res.json({ teams: loadTeams() });
+});
+
+/**
+ * POST /api/teams
+ * Saves or updates a team configuration.
+ */
+app.post('/api/teams', (req, res) => {
+  const { id, name, dailyId, jobId, active } = req.body;
+  if (!name || !dailyId || !jobId) {
+    return res.status(400).json({ error: 'name, dailyId, and jobId are required' });
+  }
+
+  const teams = loadTeams();
+  let updatedTeam;
+
+  if (id) {
+    // Edit existing team
+    const idx = teams.findIndex(t => t.id === id);
+    if (idx === -1) return res.status(404).json({ error: 'Team not found' });
+    
+    teams[idx] = { ...teams[idx], name, dailyId, jobId, active: active ?? teams[idx].active };
+    updatedTeam = teams[idx];
+  } else {
+    // Add new team
+    const isFirst = teams.length === 0;
+    updatedTeam = {
+      id: Date.now().toString(),
+      name,
+      dailyId,
+      jobId,
+      active: active ?? isFirst
+    };
+    teams.push(updatedTeam);
+  }
+
+  saveTeams(teams);
+  res.json({ team: updatedTeam, teams });
+});
+
+/**
+ * DELETE /api/teams/:id
+ * Deletes a team configuration.
+ */
+app.delete('/api/teams/:id', (req, res) => {
+  const { id } = req.params;
+  let teams = loadTeams();
+  
+  const originalLength = teams.length;
+  teams = teams.filter(t => t.id !== id);
+
+  if (teams.length === originalLength) {
+    return res.status(404).json({ error: 'Team not found' });
+  }
+
+  // Ensure at least one active team remains if teams exist
+  if (teams.length > 0 && !teams.some(t => t.active)) {
+    teams[0].active = true;
+  }
+
+  saveTeams(teams);
+  res.json({ success: true, teams });
+});
+
+// ── Background Cron Scheduler ──────────────────────────────────────────────
+// Scheduled alerts check at 10:10 AM every day
+cron.schedule('10 10 * * *', () => {
+  console.log('[cron] Running scheduled daily 10:10 AM alert check...');
+  runScheduledAlertCheck(sheets).catch(err => {
+    console.error('[cron] Scheduled alert check failed:', err.message);
+  });
 });
 
 // ── Start ────────────────────────────────────────────────────────────────────

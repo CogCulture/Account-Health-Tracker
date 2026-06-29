@@ -341,6 +341,36 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     p4: generateP4Solution(p4Score, proactiveDetails),
   };
 
+  const today = new Date();
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  const pendingLargeJobs = jobRows.filter(row => {
+    const status = (row.status || '').toString().trim().toLowerCase();
+    const isClosedOrCompleted = status === 'closed' || status === 'completed';
+    const priority = (row.priority || '').toString().trim().toUpperCase();
+    const isLarge = priority === 'XL' || priority === 'XXL';
+    
+    if (isClosedOrCompleted || !isLarge) return false;
+    if (!(row.clientTimeline instanceof Date) || isNaN(row.clientTimeline.getTime())) return false;
+
+    const timelineMidnight = new Date(
+      row.clientTimeline.getFullYear(),
+      row.clientTimeline.getMonth(),
+      row.clientTimeline.getDate()
+    );
+
+    const diffTime = timelineMidnight.getTime() - todayMidnight.getTime();
+    const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    // Due in the next 3 days (0 to 3 days remaining)
+    return daysRemaining >= 0 && daysRemaining <= 3;
+  }).map(row => ({
+    jobId: row.jobId,
+    deliverable: row.deliverable || row.jobId,
+    priority: (row.priority || '').toString().trim().toUpperCase(),
+    dueDate: row.clientTimeline.toISOString().split('T')[0],
+  }));
+
   return {
     clientName,
     month: selectedMonth,
@@ -371,6 +401,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
       clientTimeline: row.clientTimeline,
       deliveryDate: row.deliveryDate || row.closingDate,
     })),
+    pendingLargeJobs,
     rating,
     badgeColor,
     badgeText,

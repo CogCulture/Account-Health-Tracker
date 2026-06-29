@@ -26,3 +26,7 @@ dist-ssr
 # Secrets - never commit these
 .env
 service-account.json
+teams.json
+sent-alerts.json
+test-email.js
+send-real-test.js
