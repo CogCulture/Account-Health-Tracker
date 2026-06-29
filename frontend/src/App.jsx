@@ -10,11 +10,6 @@ import { calculateHealthScore } from './utils/scoreEngine';
 import { RefreshCw, BarChart3, Settings } from 'lucide-react';
 
 export default function App() {
-  const [theme, setTheme] = useState(() => {
-    try { return localStorage.getItem('client_health_dashboard_theme') || 'light'; }
-    catch { return 'light'; }
-  });
-
   // Active pairs from localStorage
   const [activePairs, setActivePairs] = useState(() => {
     const pairs = getActivePairs();
@@ -53,15 +48,6 @@ export default function App() {
 
   // View: 'dashboard' | 'history'
   const [view, setView] = useState('dashboard');
-
-  // ── Theme ──────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    try { localStorage.setItem('client_health_dashboard_theme', theme); } catch {}
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
-
-  const handleThemeToggle = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
-
   // ── Load client tabs list ────────────────────────────────────────────────
   const loadClients = useCallback(async () => {
     if (!activePairs.length) return;
@@ -194,7 +180,7 @@ export default function App() {
   }, [month, year]);
 
   return (
-    <div className="app-layout" data-theme={theme}>
+    <div className="app-layout">
 
       {/* ── Sheet Setup Screen ───────────────────────────────────────────── */}
       <SheetSetup
@@ -210,8 +196,6 @@ export default function App() {
 
       {/* ── Left Sidebar ─────────────────────────────────────────────────── */}
       <ClientSidebar
-        theme={theme}
-        onThemeToggle={handleThemeToggle}
         onShowHistory={() => setView(view === 'history' ? 'dashboard' : 'history')}
         onShowSettings={() => setShowSetup(true)}
         month={month}
@@ -235,7 +219,6 @@ export default function App() {
               setSelectedClient(record.clientName);
               setView('dashboard');
             }}
-            activeTheme={theme}
           />
         ) : (
           <>

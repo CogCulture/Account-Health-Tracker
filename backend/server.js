@@ -50,8 +50,16 @@ async function getSheetTabs(spreadsheetId) {
 }
 
 async function getSheetData(spreadsheetId, tabName) {
-  // Format tabName as a valid A1 range by wrapping in single quotes and escaping internal single quotes
-  const safeRange = `'${tabName.replace(/'/g, "''")}'`;
+  // Fetch actual tab names from the spreadsheet
+  const actualTabs = await getSheetTabs(spreadsheetId);
+  
+  // Find a case-insensitive, trimmed match, defaulting to the original tabName if not found
+  const targetLowerTrimmed = tabName.toLowerCase().trim();
+  const matchedTab = actualTabs.find(t => t.toLowerCase().trim() === targetLowerTrimmed) || tabName;
+
+  // Format the matched tabName as a valid A1 range by wrapping in single quotes
+  const safeRange = `'${matchedTab.replace(/'/g, "''")}'`;
+
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: safeRange,

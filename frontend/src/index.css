@@ -38,27 +38,6 @@
   --transition-speed: 0.3s;
 }
 
-[data-theme="dark"] {
-  /* Theme: Dark Mode */
-  --bg-primary: #090d16;
-  --bg-secondary: rgba(17, 25, 40, 0.65);
-  --bg-tertiary: #1e293b;
-  --card-bg: rgba(22, 30, 49, 0.6);
-  --card-border: rgba(255, 255, 255, 0.08);
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --accent-primary: #3b82f6;
-  --accent-hover: #2563eb;
-  --accent-glow: rgba(59, 130, 246, 0.2);
-  --shadow-primary: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
-  --sidebar-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
-  
-  --glow-excel: rgba(16, 185, 129, 0.25);
-  --glow-good: rgba(245, 158, 11, 0.25);
-  --glow-orange: rgba(249, 115, 22, 0.25);
-  --glow-critical: rgba(239, 68, 68, 0.25);
-}
 
 /* ==========================================
    BASE STYLES & RESET

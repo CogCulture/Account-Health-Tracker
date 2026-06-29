@@ -15,8 +15,6 @@ const RATING_COLORS = {
 };
 
 export default function ClientSidebar({
-  theme,
-  onThemeToggle,
   onShowHistory,
   onShowSettings,
   // Period state (controlled by parent so ScoreScreen knows the period)
@@ -169,36 +167,14 @@ export default function ClientSidebar({
           <span>Manage Teams</span>
         </button>
 
-        {/* Theme + History row */}
+        {/* History row */}
         <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
-          <button 
-            className="theme-toggle" 
-            onClick={onThemeToggle} 
-            title="Toggle theme" 
-            style={{ 
-              flex: 1, 
-              height: 34, 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              gap: '0.4rem',
-              borderRadius: 8,
-              background: 'rgba(255, 255, 255, 0.04)',
-              border: '1px solid var(--card-border)',
-              color: 'var(--text-secondary)',
-              cursor: 'pointer',
-              fontSize: '0.78rem',
-            }}
-          >
-            {theme === 'dark' ? <Sun size={13} /> : <Moon size={13} />}
-            <span>Theme</span>
-          </button>
           <button 
             className="theme-toggle" 
             onClick={onShowHistory} 
             title="View history" 
             style={{ 
-              flex: 1, 
+              width: '100%',
               height: 34, 
               display: 'flex', 
               alignItems: 'center', 

@@ -8,7 +8,7 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-export default function HistoryView({ onViewDetails, activeTheme }) {
+export default function HistoryView({ onViewDetails }) {
   const [history, setHistory] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClientForTrend, setSelectedClientForTrend] = useState('');
@@ -67,12 +67,11 @@ export default function HistoryView({ onViewDetails, activeTheme }) {
     const labels = clientRecords.map(r => `${MONTH_NAMES[r.month].substring(0, 3)} ${r.year}`);
     const dataPoints = clientRecords.map(r => r.scores.total);
 
-    // Context colors based on active theme
-    const isDark = activeTheme === 'dark';
-    const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
-    const textColor = isDark ? '#94a3b8' : '#475569';
-    const lineColor = isDark ? '#3b82f6' : '#2563eb';
-    const pointColor = isDark ? '#10b981' : '#16a34a';
+    // Context colors for light theme
+    const gridColor = 'rgba(0, 0, 0, 0.06)';
+    const textColor = '#475569';
+    const lineColor = '#2563eb';
+    const pointColor = '#16a34a';
 
     // Destroy old instance
     if (chartInstanceRef.current) {
@@ -115,10 +114,10 @@ export default function HistoryView({ onViewDetails, activeTheme }) {
             }
           },
           tooltip: {
-            backgroundColor: isDark ? '#1f2937' : '#ffffff',
-            titleColor: isDark ? '#ffffff' : '#0f172a',
-            bodyColor: isDark ? '#94a3b8' : '#475569',
-            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0,0,0,0.1)',
+            backgroundColor: '#ffffff',
+            titleColor: '#0f172a',
+            bodyColor: '#475569',
+            borderColor: 'rgba(0,0,0,0.1)',
             borderWidth: 1,
             titleFont: { family: 'Outfit', weight: 'bold' },
             bodyFont: { family: 'Outfit' },
@@ -152,7 +151,7 @@ export default function HistoryView({ onViewDetails, activeTheme }) {
         chartInstanceRef.current = null;
       }
     };
-  }, [history, selectedClientForTrend, activeTheme]);
+  }, [history, selectedClientForTrend]);
 
   const handleDeleteRecord = (id, e) => {
     e.stopPropagation();
