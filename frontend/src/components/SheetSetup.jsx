@@ -65,7 +65,7 @@ function PairForm({ initial, onSave, onCancel }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
       <div>
-        <label className="form-label" style={{ fontSize: '0.75rem' }}>Pair Name</label>
+        <label className="form-label" style={{ fontSize: '0.75rem' }}>Team Name</label>
         <input className="form-control" style={{ fontSize: '0.88rem' }} placeholder="e.g. Team A" value={name}
           onChange={e => { setName(e.target.value); setError(''); }} />
       </div>
@@ -95,7 +95,7 @@ function PairForm({ initial, onSave, onCancel }) {
       <div style={{ display: 'flex', gap: '0.6rem' }}>
         <button className="btn btn-primary" style={{ flex: 1 }} onClick={handle}
           disabled={!dailyUrl.trim() || !jobUrl.trim()}>
-          Save Pair
+          Save Team Sheets
         </button>
         {onCancel && <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>}
       </div>
@@ -157,7 +157,7 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
           </div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '0.3rem' }}>Connect your Google Sheets</h2>
           <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-            Add your first sheet pair. You can add more pairs later from the sidebar.
+            Add your first team sheets. You can add more teams later from the sidebar.
           </p>
           <PairForm onSave={(data) => {
             const id = Date.now().toString();
@@ -188,7 +188,7 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
         <div style={{ padding: '1.1rem 1.4rem', borderBottom: '1px solid var(--card-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 2 }}>Configuration</div>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Sheet Pairs</h3>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Team Sheets</h3>
           </div>
           <button onClick={handleClose} style={{ background: 'var(--bg-tertiary)', border: 'none', borderRadius: 8, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '1rem' }}>✕</button>
         </div>
@@ -238,7 +238,7 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
 
           {adding ? (
             <div style={{ padding: '1rem', borderRadius: 10, border: '1px dashed var(--card-border)', background: 'var(--card-bg)', marginTop: '0.25rem' }}>
-              <p style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.85rem' }}>New Sheet Pair</p>
+              <p style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.85rem' }}>New Team Sheets</p>
               <PairForm onSave={handleAdd} onCancel={() => setAdding(false)} />
             </div>
           ) : (
@@ -252,7 +252,7 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
               onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent-primary)'; e.currentTarget.style.color = 'var(--accent-primary)'; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--card-border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
             >
-              <Plus size={15} /> Add Sheet Pair
+              <Plus size={15} /> Add Team Sheets
             </button>
           )}
         </div>

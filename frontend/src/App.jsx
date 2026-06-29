@@ -11,8 +11,8 @@ import { RefreshCw, BarChart3, Settings } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState(() => {
-    try { return localStorage.getItem('client_health_dashboard_theme') || 'dark'; }
-    catch { return 'dark'; }
+    try { return localStorage.getItem('client_health_dashboard_theme') || 'light'; }
+    catch { return 'light'; }
   });
 
   // Active pairs from localStorage

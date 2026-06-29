@@ -7,39 +7,7 @@
   /* Font Family */
   --font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
-  /* Theme: Dark Mode (Default) */
-  --bg-primary: #090d16;
-  --bg-secondary: rgba(17, 25, 40, 0.65);
-  --bg-tertiary: #1e293b;
-  --card-bg: rgba(22, 30, 49, 0.6);
-  --card-border: rgba(255, 255, 255, 0.08);
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --accent-primary: #3b82f6;
-  --accent-hover: #2563eb;
-  --accent-glow: rgba(59, 130, 246, 0.2);
-  --shadow-primary: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
-  --sidebar-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
-  
-  /* Status Colors & Glows */
-  --color-excel: #10b981;
-  --color-good: #f59e0b;
-  --color-orange: #f97316;
-  --color-critical: #ef4444;
-  
-  --glow-excel: rgba(16, 185, 129, 0.25);
-  --glow-good: rgba(245, 158, 11, 0.25);
-  --glow-orange: rgba(249, 115, 22, 0.25);
-  --glow-critical: rgba(239, 68, 68, 0.25);
-
-  --sidebar-width: 260px;
-  --border-radius: 16px;
-  --transition-speed: 0.3s;
-}
-
-[data-theme="light"] {
-  /* Theme: Light Mode */
+  /* Theme: Light Mode (Default) */
   --bg-primary: #f4f6fa;
   --bg-secondary: rgba(255, 255, 255, 0.8);
   --bg-tertiary: #e2e8f0;
@@ -54,10 +22,42 @@
   --shadow-primary: 0 8px 32px 0 rgba(15, 23, 42, 0.08);
   --sidebar-shadow: 4px 0 24px rgba(0, 0, 0, 0.06);
   
+  /* Status Colors & Glows */
+  --color-excel: #10b981;
+  --color-good: #f59e0b;
+  --color-orange: #f97316;
+  --color-critical: #ef4444;
+  
   --glow-excel: rgba(16, 185, 129, 0.15);
   --glow-good: rgba(245, 158, 11, 0.15);
   --glow-orange: rgba(249, 115, 22, 0.15);
   --glow-critical: rgba(239, 68, 68, 0.15);
+
+  --sidebar-width: 260px;
+  --border-radius: 16px;
+  --transition-speed: 0.3s;
+}
+
+[data-theme="dark"] {
+  /* Theme: Dark Mode */
+  --bg-primary: #090d16;
+  --bg-secondary: rgba(17, 25, 40, 0.65);
+  --bg-tertiary: #1e293b;
+  --card-bg: rgba(22, 30, 49, 0.6);
+  --card-border: rgba(255, 255, 255, 0.08);
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-primary: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-glow: rgba(59, 130, 246, 0.2);
+  --shadow-primary: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+  --sidebar-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
+  
+  --glow-excel: rgba(16, 185, 129, 0.25);
+  --glow-good: rgba(245, 158, 11, 0.25);
+  --glow-orange: rgba(249, 115, 22, 0.25);
+  --glow-critical: rgba(239, 68, 68, 0.25);
 }
 
 /* ==========================================

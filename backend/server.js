@@ -23,17 +23,21 @@ app.use(cors({
 
 
 // ── Google Auth via Service Account ─────────────────────────────────────────
-const SERVICE_ACCOUNT_PATH = resolve(__dirname, 'service-account.json');
-
 let auth;
 try {
-  const keyFile = JSON.parse(readFileSync(SERVICE_ACCOUNT_PATH, 'utf8'));
+  let credentials;
+  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  } else {
+    const SERVICE_ACCOUNT_PATH = resolve(__dirname, 'service-account.json');
+    credentials = JSON.parse(readFileSync(SERVICE_ACCOUNT_PATH, 'utf8'));
+  }
   auth = new google.auth.GoogleAuth({
-    credentials: keyFile,
+    credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
   });
 } catch (err) {
-  console.error('[server] Failed to load service-account.json:', err.message);
+  console.error('[server] Failed to load Google service account credentials:', err.message);
   process.exit(1);
 }
 
@@ -46,9 +50,11 @@ async function getSheetTabs(spreadsheetId) {
 }
 
 async function getSheetData(spreadsheetId, tabName) {
+  // Format tabName as a valid A1 range by wrapping in single quotes and escaping internal single quotes
+  const safeRange = `'${tabName.replace(/'/g, "''")}'`;
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: tabName,
+    range: safeRange,
     valueRenderOption: 'UNFORMATTED_VALUE',
     dateTimeRenderOption: 'SERIAL_NUMBER',
   });

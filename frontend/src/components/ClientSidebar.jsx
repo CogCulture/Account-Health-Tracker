@@ -149,7 +149,7 @@ export default function ClientSidebar({
         {/* Sheets button — full width on top */}
         <button
           onClick={onShowSettings}
-          title="Manage sheet pairs"
+          title="Manage team sheets"
           style={{
             width: '100%',
             height: 34,
@@ -166,7 +166,7 @@ export default function ClientSidebar({
           }}
         >
           <Settings size={13} />
-          <span>Manage Sheets</span>
+          <span>Manage Teams</span>
         </button>
 
         {/* Theme + History row */}
