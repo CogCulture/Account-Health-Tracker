@@ -30,3 +30,4 @@ teams.json
 sent-alerts.json
 test-email.js
 send-real-test.js
+trigger-alert.js

@@ -161,6 +161,8 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
 
   const handleClose = () => { setAdding(false); setEditingId(null); onClose(); };
 
+  if (!open) return null;
+
   // First-run: no teams at all → full-screen onboarding
   if (!isLoading && pairs.length === 0) {
     return (
@@ -175,12 +177,19 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
             Add your first team sheets. You can add more teams later from the sidebar.
           </p>
           <PairForm onSave={handleAdd} />
+          
+          <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+            <button 
+              onClick={handleClose} 
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '0.85rem', cursor: 'pointer', textDecoration: 'underline' }}
+            >
+              Continue without adding / already added
+            </button>
+          </div>
         </div>
       </div>
     );
   }
-
-  if (!open) return null;
 
   return (
     <>

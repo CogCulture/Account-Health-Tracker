@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import { parseJobTrackerRows, getCommonClientTabs } from '../frontend/src/utils/sheetsParser.js';
-import { sendAlertEmail } from './emailService.js';
+import { sendAlertEmail, sendClientSummaryEmail } from './emailService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEAMS_PATH = resolve(__dirname, 'teams.json');
@@ -83,13 +83,15 @@ export async function runScheduledAlertCheck(sheets) {
         try {
           const rawJobs = await getSheetData(sheets, team.jobId, clientName);
           const jobs = parseJobTrackerRows(rawJobs, clientName);
+          const matchingClientJobs = [];
 
           for (const job of jobs) {
             const priority = (job.priority || '').toString().trim().toUpperCase();
             if (priority !== 'XL' && priority !== 'XXL') continue;
 
             const status = (job.status || '').toString().trim().toLowerCase();
-            if (status === 'closed' || status === 'completed') continue;
+            // Only trigger for 'in progress' or 'not started'
+            if (status !== 'in progress' && status !== 'not started') continue;
 
             if (!job.clientTimeline || !(job.clientTimeline instanceof Date) || isNaN(job.clientTimeline.getTime())) continue;
 
@@ -103,26 +105,36 @@ export async function runScheduledAlertCheck(sheets) {
             const diffTime = timelineMidnight.getTime() - todayMidnight.getTime();
             const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-            // Alert trigger: exactly 2 days before due date
-            if (daysRemaining === 2) {
+            // Alert trigger: 2 days or less remaining (including overdue)
+            if (daysRemaining <= 2) {
               const alertKey = `${team.id}::${clientName}::${job.jobId}`;
               if (!sentAlerts.has(alertKey)) {
                 const dueDateStr = job.clientTimeline.toISOString().split('T')[0];
-                console.log(`[alertEngine] Alert criteria met! Job ${job.jobId} (${priority}) for "${clientName}" is due on ${dueDateStr} (in 2 days). Sending email...`);
-                
-                const success = await sendAlertEmail({
-                  clientName,
+                matchingClientJobs.push({
                   jobId: job.jobId,
                   deliverable: job.deliverable || job.jobId,
                   priority,
                   dueDate: dueDateStr,
                   daysRemaining,
+                  alertKey
                 });
+              }
+            }
+          }
 
-                if (success) {
-                  sentAlerts.add(alertKey);
-                  newAlertLog.push(alertKey);
-                }
+          // If there are new alerts for this client, send a single consolidated email
+          if (matchingClientJobs.length > 0) {
+            console.log(`[alertEngine] Alert criteria met! Found ${matchingClientJobs.length} high-priority job(s) for "${clientName}". Sending summary email...`);
+            
+            const success = await sendClientSummaryEmail({
+              clientName,
+              jobs: matchingClientJobs
+            });
+
+            if (success) {
+              for (const job of matchingClientJobs) {
+                sentAlerts.add(job.alertKey);
+                newAlertLog.push(job.alertKey);
               }
             }
           }
