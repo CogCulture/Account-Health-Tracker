@@ -209,9 +209,9 @@ app.delete('/api/teams/:id', (req, res) => {
 });
 
 // ── Background Cron Scheduler ──────────────────────────────────────────────
-// Scheduled alerts check at 11:36 AM every day
-cron.schedule('36 11 * * *', () => {
-  console.log('[cron] Running scheduled daily 11:36 AM alert check...');
+// Scheduled alerts check at 10:10 AM every day
+cron.schedule('10 10 * * *', () => {
+  console.log('[cron] Running scheduled daily 10:10 AM alert check...');
   runScheduledAlertCheck(sheets).catch(err => {
     console.error('[cron] Scheduled alert check failed:', err.message);
   });
