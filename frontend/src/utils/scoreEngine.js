@@ -84,17 +84,24 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   const deepakshiInPerson = inPersonRows.filter(row => isDeepakshi(row.jsrNameCol)).length;
   const otherInPerson     = inPersonRows.filter(row => !isDeepakshi(row.jsrNameCol)).length;
 
-  let deepakshiPoints = 0;
-  if (deepakshiInPerson >= 3)       deepakshiPoints = 3;
-  else if (deepakshiInPerson === 2) deepakshiPoints = 2;
-  else if (deepakshiInPerson === 1) deepakshiPoints = 1;
-
-  let otherInPersonPoints = 0;
-  if (otherInPerson >= 2)      otherInPersonPoints = 2;
-  else if (otherInPerson === 1) otherInPersonPoints = 1;
-
-  const inPersonPoints = Math.min(5, deepakshiPoints + otherInPersonPoints);
   const inPersonCalls  = inPersonRows.length;
+  let inPersonPoints = 0;
+
+  const isBharti = (clientName || '').toLowerCase().trim().startsWith('bharti');
+  if (isBharti) {
+    inPersonPoints = Math.min(5, inPersonCalls);
+  } else {
+    let deepakshiPoints = 0;
+    if (deepakshiInPerson >= 2)       deepakshiPoints = 2;
+    else if (deepakshiInPerson === 1) deepakshiPoints = 1;
+
+    let otherInPersonPoints = 0;
+    if (otherInPerson >= 3)      otherInPersonPoints = 3;
+    else if (otherInPerson === 2) otherInPersonPoints = 2;
+    else if (otherInPerson === 1) otherInPersonPoints = 1;
+
+    inPersonPoints = Math.min(5, deepakshiPoints + otherInPersonPoints);
+  }
 
   // On-Call Attendance % — only verified rows count (max 5 pts)
   const totalWorkingDays = filteredDaily.length;
@@ -335,7 +342,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   };
 
   const solutions = {
-    p1: generateP1Solution(inPersonCalls, attendanceRate),
+    p1: generateP1Solution(isBharti, inPersonCalls, deepakshiInPerson, otherInPerson, attendanceRate),
     p2: generateP2Solution(p2Score, totalClosed),
     p3: generateP3Solution(creativeAttendDays, managementAttendDays),
     p4: generateP4Solution(p4Score, proactiveDetails),
@@ -427,12 +434,19 @@ function generateP1Insight(inPerson, attendanceRate, workingDays) {
   return insight;
 }
 
-function generateP1Solution(inPerson, attendanceRate) {
+function generateP1Solution(isBharti, inPersonCalls, deepakshi, others, attendanceRate) {
   const tips = [];
-  if (inPerson < 3) tips.push(`Schedule ${3 - inPerson} more in-person meeting(s) to reach the 3-call threshold for full points.`);
+  if (isBharti) {
+    if (inPersonCalls < 5) {
+      tips.push(`Schedule ${5 - inPersonCalls} more in-person meeting(s) to reach the 5-call threshold for full points.`);
+    }
+  } else {
+    if (deepakshi < 2) tips.push(`Schedule ${2 - deepakshi} more in-person meeting(s) with Deepakshi to reach the 2-call threshold.`);
+    if (others < 3) tips.push(`Schedule ${3 - others} more in-person meeting(s) with other team members to reach the 3-call threshold.`);
+  }
   if (attendanceRate < 90) tips.push(`Improve daily JSR call attendance from ${Math.round(attendanceRate)}% to 90%+ by setting standing calendar reminders.`);
   if (attendanceRate < 50) tips.push('Attendance is critical — establish a fixed daily sync time with the client immediately.');
-  if (tips.length === 0) tips.push('Keep up the consistency. Maintain 3+ in-person calls and 90%+ attendance each month.');
+  if (tips.length === 0) tips.push('Keep up the consistency. Maintain required in-person calls and 90%+ attendance each month.');
   return tips;
 }
 
