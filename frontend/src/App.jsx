@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import ClientSidebar from './components/ClientSidebar';
 import ScoreScreen from './components/ScoreScreen';
 import HistoryView from './components/HistoryView';
+import OverviewDashboard from './components/OverviewDashboard';
 import ErrorModal from './components/ErrorModal';
 import SheetSetup from './components/SheetSetup';
 import { fetchSheetData, fetchSheetTabs } from './utils/sheetsApi';
@@ -30,6 +31,8 @@ export default function App() {
 
   // Cache: { "ClientName__month__year": { percentage, rating } }
   const [clientScores, setClientScores] = useState({});
+  // Full result cache for overview cards
+  const [clientFullData, setClientFullData] = useState({});
 
   // Lifted client loading states
   const [clients, setClients]       = useState([]);
@@ -39,8 +42,8 @@ export default function App() {
   const [errorMsg,    setErrorMsg]    = useState('');
   const [isErrorOpen, setIsErrorOpen] = useState(false);
 
-  // View: 'dashboard' | 'history'
-  const [view, setView] = useState('dashboard');
+  // View: 'dashboard' | 'history' | 'overview'
+  const [view, setView] = useState('overview');
 
   // Load active teams from backend on startup
   useEffect(() => {
@@ -135,6 +138,7 @@ export default function App() {
         ...prev,
         [cacheKey]: { percentage: result.scores.percentage, rating: result.rating },
       }));
+      setClientFullData(prev => ({ ...prev, [cacheKey]: result }));
     } catch (err) {
       setCalcStatus('error');
       setCalcError(err.message);
@@ -162,6 +166,7 @@ export default function App() {
           setCalcStatus('idle');
           const cacheKey = `${selectedClient}__${month}__${year}`;
           setClientScores(prev => ({ ...prev, [cacheKey]: { percentage: result.scores.percentage, rating: result.rating } }));
+          setClientFullData(prev => ({ ...prev, [cacheKey]: result }));
         } catch (err) {
           setCalcStatus('error');
           setCalcError(err.message);
@@ -174,6 +179,29 @@ export default function App() {
     }
     await clientsPromise;
   }, [selectedClient, clients, loadClients, month, year]);
+
+  // ── Batch-load all clients for Overview Dashboard ────────────────────────
+  const batchLoadAllClients = useCallback(async (clientList, onClientDone) => {
+    await Promise.allSettled(clientList.map(async (clientEntry) => {
+      const { key, tabName, dailyId, jobId, label } = clientEntry;
+      const cacheKey = `${key}__${month}__${year}`;
+      try {
+        const [dailyRaw, jobRaw] = await Promise.all([
+          fetchSheetData(dailyId, tabName),
+          fetchSheetData(jobId, tabName),
+        ]);
+        const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
+        const jobRows   = parseJobTrackerRows(jobRaw, tabName);
+        const result    = calculateHealthScore(dailyRows, jobRows, label, month, year);
+        setClientScores(prev => ({ ...prev, [cacheKey]: { percentage: result.scores.percentage, rating: result.rating } }));
+        setClientFullData(prev => ({ ...prev, [cacheKey]: result }));
+      } catch (err) {
+        console.error(`[batchLoad] Failed for ${label}:`, err);
+      } finally {
+        onClientDone(key);
+      }
+    }));
+  }, [month, year]);
 
   // Re-calculate when month/year changes if a client is already selected
   const handleMonthChange = (m) => {
@@ -218,6 +246,7 @@ export default function App() {
       {/* ── Left Sidebar ─────────────────────────────────────────────────── */}
       <ClientSidebar
         onShowHistory={() => setView(view === 'history' ? 'dashboard' : 'history')}
+        onShowOverview={() => setView(view === 'overview' ? 'dashboard' : 'overview')}
         onShowSettings={() => setShowSetup(true)}
         month={month}
         year={year}
@@ -229,6 +258,7 @@ export default function App() {
         clients={clients}
         loadStatus={loadStatus}
         onLoadClients={loadClients}
+        activeView={view}
       />
 
       {/* ── Main Content Area ─────────────────────────────────────────────── */}
@@ -240,6 +270,16 @@ export default function App() {
               setSelectedClient(record.clientName);
               setView('dashboard');
             }}
+          />
+        ) : view === 'overview' ? (
+          <OverviewDashboard
+            clients={clients}
+            loadStatus={loadStatus}
+            month={month}
+            year={year}
+            clientScores={clientFullData}
+            onSelectClient={(key) => { setView('dashboard'); handleSelectClient(key); }}
+            onBatchLoad={batchLoadAllClients}
           />
         ) : (
           <>
@@ -260,7 +300,7 @@ export default function App() {
               <div style={{ padding: '2rem', overflowY: 'auto', height: '100%' }}>
                 <ScoreScreen
                   scoreData={scoreData}
-                  onReset={() => { setScoreData(null); setSelectedClient(null); }}
+                  onReset={() => { setScoreData(null); setSelectedClient(null); setView('overview'); }}
                   onSaveSuccess={() => window.dispatchEvent(new Event('storage'))}
                   onReload={handleReload}
                 />

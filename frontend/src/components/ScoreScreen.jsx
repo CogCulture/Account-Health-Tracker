@@ -19,10 +19,12 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
   const [solutionsOpen, setSolutionsOpen] = useState(false);
   const [isBannerDismissed, setIsBannerDismissed] = useState(false);
   const [showPendingJobsModal, setShowPendingJobsModal] = useState(false);
+  const [showEscalationsModal, setShowEscalationsModal] = useState(false);
 
   useEffect(() => {
     setIsBannerDismissed(false);
     setShowPendingJobsModal(false);
+    setShowEscalationsModal(false);
   }, [clientName]);
 
   const statusCanvasRef = useRef(null);
@@ -582,17 +584,13 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
             <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>{clientName}</h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Relationship assessment for {monthName} {year}</p>
-              <span style={{
-                padding: '0.2rem 0.65rem',
-                borderRadius: 20,
-                fontSize: '0.78rem',
-                fontWeight: 700,
-                background: escalationCount > 0 ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.08)',
-                border: `1px solid ${escalationCount > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.2)'}`,
-                color: escalationCount > 0 ? '#EF4444' : '#10B981',
-              }}>
+              <button
+                onClick={() => { if (escalationCount > 0) setShowEscalationsModal(true); }}
+                disabled={escalationCount === 0}
+                className={`escalation-badge-btn ${escalationCount > 0 ? 'has-escalations' : 'no-escalations'}`}
+              >
                 {escalationCount} Escalation{escalationCount !== 1 ? 's' : ''}
-              </span>
+              </button>
             </div>
           </div>
         </div>
@@ -843,6 +841,77 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Escalations Modal */}
+      {showEscalationsModal && (
+        <>
+          <div onClick={() => setShowEscalationsModal(false)} style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(5px)',
+          }} />
+          <div style={{
+            position: 'fixed', top: '50%', left: '50%', zIndex: 201,
+            width: '90%', maxWidth: '600px', maxHeight: '85vh',
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--card-border)',
+            borderRadius: 16,
+            boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
+            transform: 'translate(-50%, -50%)',
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: '1.1rem 1.5rem',
+              borderBottom: '1px solid var(--card-border)',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Escalated Jobs for {clientName}</h3>
+              </div>
+              <button onClick={() => setShowEscalationsModal(false)} style={{
+                background: 'var(--bg-tertiary)', border: 'none', borderRadius: 8,
+                width: 32, height: 32, display: 'flex', alignItems: 'center',
+                justifyContent: 'center', cursor: 'pointer', color: 'var(--text-secondary)',
+              }}>✕</button>
+            </div>
+            {/* Content */}
+            <div style={{ overflowY: 'auto', padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {(scoreData?.jobsList?.filter(row => {
+                const val = (row.escalation || '').toString().trim().toLowerCase();
+                return val && val !== '' && val !== 'no' && val !== 'n' && val !== 'false' && val !== '0' && val !== 'none' && val !== 'n/a';
+              }) || []).map((job, i) => (
+                <div key={i} style={{
+                  padding: '1rem',
+                  borderRadius: 10,
+                  border: '1px solid var(--card-border)',
+                  background: 'rgba(255,255,255,0.03)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.5rem',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                      {job.deliverable || job.jobId || 'Unnamed Deliverable'}
+                    </div>
+                    {job.jobId && (
+                      <span style={{ fontSize: '0.72rem', background: 'var(--bg-tertiary)', padding: '2px 8px', borderRadius: 4, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                        {job.jobId}
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.25rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                    <div><strong>Job Type:</strong> {job.jobType || '—'}</div>
+                    <div><strong>Status:</strong> {job.status || '—'}</div>
+                    <div><strong>Client Timeline:</strong> {job.clientTimeline ? new Date(job.clientTimeline).toLocaleDateString() : '—'}</div>
+                    <div><strong>Delivery Date:</strong> {job.deliveryDate ? new Date(job.deliveryDate).toLocaleDateString() : '—'}</div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </>

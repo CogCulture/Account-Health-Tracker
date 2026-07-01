@@ -3,9 +3,9 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import { parseJobTrackerRows, getCommonClientTabs } from '../frontend/src/utils/sheetsParser.js';
 import { sendAlertEmail, sendClientSummaryEmail } from './emailService.js';
+import { getTeamsCollection } from './db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const TEAMS_PATH = resolve(__dirname, 'teams.json');
 const ALERTS_PATH = resolve(__dirname, 'sent-alerts.json');
 
 // Standalone sheets API helpers
@@ -55,10 +55,18 @@ function saveJSON(path, data) {
 export async function runScheduledAlertCheck(sheets) {
   console.log('[alertEngine] Starting scheduled alert check...');
   
-  const teams = loadJSON(TEAMS_PATH);
-  const activeTeams = teams.filter(t => t.active);
+  let activeTeams = [];
+  try {
+    const collection = await getTeamsCollection();
+    const teams = await collection.find({}).toArray();
+    activeTeams = teams.filter(t => t.active);
+  } catch (dbErr) {
+    console.error('[alertEngine] Failed to fetch active teams from MongoDB:', dbErr.message);
+    return;
+  }
+
   if (activeTeams.length === 0) {
-    console.log('[alertEngine] No active teams configured in teams.json. Skipping check.');
+    console.log('[alertEngine] No active teams configured in MongoDB. Skipping check.');
     return;
   }
 

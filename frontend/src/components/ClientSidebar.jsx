@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search, HeartPulse, ChevronRight, Calendar, Sun, Moon, History, Settings } from 'lucide-react';
+import { RefreshCw, Search, HeartPulse, ChevronRight, Calendar, History, Settings, LayoutGrid } from 'lucide-react';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -16,6 +16,7 @@ const RATING_COLORS = {
 
 export default function ClientSidebar({
   onShowHistory,
+  onShowOverview,
   onShowSettings,
   // Period state (controlled by parent so ScoreScreen knows the period)
   month, year, onMonthChange, onYearChange,
@@ -28,6 +29,7 @@ export default function ClientSidebar({
   clients,
   loadStatus,
   onLoadClients,
+  activeView,
 }) {
   const [search, setSearch]         = useState('');
 
@@ -45,6 +47,19 @@ export default function ClientSidebar({
             Account Health
           </span>
         </div>
+      </div>
+
+      {/* ── All Brands Button (Home) ──────────────── */}
+      <div style={{ padding: '0.75rem 0.75rem 0.25rem' }}>
+        <button
+          onClick={onShowOverview}
+          className={`all-brands-home-btn ${activeView === 'overview' ? 'active' : ''}`}
+        >
+          <LayoutGrid size={15} style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>
+            All Brands Dashboard
+          </span>
+        </button>
       </div>
 
       {/* ── Period selector ───────────────────────── */}
@@ -75,64 +90,68 @@ export default function ClientSidebar({
         </div>
       </div>
 
-      {/* ── Search ────────────────────────────────── */}
-      <div className="sidebar-search-wrap">
-        <Search size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-        <input
-          className="sidebar-search-input"
-          type="text"
-          placeholder="Search clients…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-      </div>
-
-      {/* ── Client list ───────────────────────────── */}
-      <nav className="sidebar-client-list">
-        {loadStatus === 'loading' && (
-          <div className="sidebar-status-msg">
-            <RefreshCw size={13} className="spin" /> Loading…
+      {activeView === 'dashboard' && (
+        <>
+          {/* ── Search ────────────────────────────────── */}
+          <div className="sidebar-search-wrap">
+            <Search size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+            <input
+              className="sidebar-search-input"
+              type="text"
+              placeholder="Search clients…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
           </div>
-        )}
-        {loadStatus === 'error' && (
-          <div className="sidebar-status-msg" style={{ color: 'var(--color-critical)' }}>
-            Failed to connect. <button onClick={onLoadClients} style={{ color: 'var(--accent-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 'inherit' }}>Retry</button>
-          </div>
-        )}
-        {loadStatus === 'loaded' && filtered.length === 0 && (
-          <div className="sidebar-status-msg">No clients match.</div>
-        )}
 
-        {loadStatus === 'loaded' && filtered.map(client => {
-          const score  = clientScores[`${client.key}__${month}__${year}`];
-          const active = client.key === selectedClient;
-          const color  = score ? (RATING_COLORS[score.rating] || '#EF4444') : null;
-
-          return (
-            <button
-              key={client.key}
-              className={`sidebar-client-btn ${active ? 'active' : ''}`}
-              onClick={() => onSelectClient(client.key)}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                <span className="sidebar-client-name">{client.label}</span>
-                {score ? (
-                  <span style={{ fontSize: '0.78rem', fontWeight: 700, color, flexShrink: 0 }}>
-                    {score.percentage}%
-                  </span>
-                ) : (
-                  <ChevronRight size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                )}
+          {/* ── Client list ───────────────────────────── */}
+          <nav className="sidebar-client-list">
+            {loadStatus === 'loading' && (
+              <div className="sidebar-status-msg">
+                <RefreshCw size={13} className="spin" /> Loading…
               </div>
-              {score && (
-                <div className="sidebar-score-bar">
-                  <div className="sidebar-score-bar-fill" style={{ width: `${score.percentage}%`, backgroundColor: color }} />
-                </div>
-              )}
-            </button>
-          );
-        })}
-      </nav>
+            )}
+            {loadStatus === 'error' && (
+              <div className="sidebar-status-msg" style={{ color: 'var(--color-critical)' }}>
+                Failed to connect. <button onClick={onLoadClients} style={{ color: 'var(--accent-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 'inherit' }}>Retry</button>
+              </div>
+            )}
+            {loadStatus === 'loaded' && filtered.length === 0 && (
+              <div className="sidebar-status-msg">No clients match.</div>
+            )}
+
+            {loadStatus === 'loaded' && filtered.map(client => {
+              const score  = clientScores[`${client.key}__${month}__${year}`];
+              const active = client.key === selectedClient && activeView === 'dashboard';
+              const color  = score ? (RATING_COLORS[score.rating] || '#EF4444') : null;
+
+              return (
+                <button
+                  key={client.key}
+                  className={`sidebar-client-btn ${active ? 'active' : ''}`}
+                  onClick={() => onSelectClient(client.key)}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <span className="sidebar-client-name">{client.label}</span>
+                    {score ? (
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, color, flexShrink: 0 }}>
+                        {score.percentage}%
+                      </span>
+                    ) : (
+                      <ChevronRight size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                    )}
+                  </div>
+                  {score && (
+                    <div className="sidebar-score-bar">
+                      <div className="sidebar-score-bar-fill" style={{ width: `${score.percentage}%`, backgroundColor: color }} />
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </>
+      )}
 
       {/* ── Sidebar Bottom / Footer ────────────────── */}
       <div style={{

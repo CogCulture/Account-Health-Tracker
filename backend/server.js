@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import cron from 'node-cron';
 import { runScheduledAlertCheck } from './alertEngine.js';
+import { getTeamsCollection } from './db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -118,94 +119,92 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ── Teams CRUD Configuration API ──────────────────────────────────────────────
-const TEAMS_PATH = resolve(__dirname, 'teams.json');
-
-function loadTeams() {
-  try {
-    if (existsSync(TEAMS_PATH)) {
-      return JSON.parse(readFileSync(TEAMS_PATH, 'utf8'));
-    }
-  } catch (err) {
-    console.error('[server] Failed to load teams.json:', err.message);
-  }
-  return [];
-}
-
-function saveTeams(teams) {
-  try {
-    writeFileSync(TEAMS_PATH, JSON.stringify(teams, null, 2), 'utf8');
-  } catch (err) {
-    console.error('[server] Failed to save teams.json:', err.message);
-  }
-}
 
 /**
  * GET /api/teams
- * Returns the list of teams.
+ * Returns the list of teams from MongoDB.
  */
-app.get('/api/teams', (_req, res) => {
-  res.json({ teams: loadTeams() });
+app.get('/api/teams', async (_req, res) => {
+  try {
+    const collection = await getTeamsCollection();
+    const teams = await collection.find({}).toArray();
+    res.json({ teams });
+  } catch (err) {
+    console.error('[server] GET /api/teams error:', err.message);
+    res.status(500).json({ error: 'Failed to retrieve teams' });
+  }
 });
 
 /**
  * POST /api/teams
- * Saves or updates a team configuration.
+ * Saves or updates a team configuration in MongoDB.
  */
-app.post('/api/teams', (req, res) => {
+app.post('/api/teams', async (req, res) => {
   const { id, name, dailyId, jobId, active } = req.body;
   if (!name || !dailyId || !jobId) {
     return res.status(400).json({ error: 'name, dailyId, and jobId are required' });
   }
 
-  const teams = loadTeams();
-  let updatedTeam;
+  try {
+    const collection = await getTeamsCollection();
+    let updatedTeam;
 
-  if (id) {
-    // Edit existing team
-    const idx = teams.findIndex(t => t.id === id);
-    if (idx === -1) return res.status(404).json({ error: 'Team not found' });
-    
-    teams[idx] = { ...teams[idx], name, dailyId, jobId, active: active ?? teams[idx].active };
-    updatedTeam = teams[idx];
-  } else {
-    // Add new team
-    const isFirst = teams.length === 0;
-    updatedTeam = {
-      id: Date.now().toString(),
-      name,
-      dailyId,
-      jobId,
-      active: active ?? isFirst
-    };
-    teams.push(updatedTeam);
+    if (id) {
+      // Edit existing team in DB
+      await collection.updateOne(
+        { id },
+        { $set: { name, dailyId, jobId, active: active ?? false } }
+      );
+      updatedTeam = await collection.findOne({ id });
+    } else {
+      // Add new team
+      const count = await collection.countDocuments({});
+      const isFirst = count === 0;
+      updatedTeam = {
+        id: Date.now().toString(),
+        name,
+        dailyId,
+        jobId,
+        active: active ?? isFirst
+      };
+      await collection.insertOne(updatedTeam);
+    }
+
+    const teams = await collection.find({}).toArray();
+    res.json({ team: updatedTeam, teams });
+  } catch (err) {
+    console.error('[server] POST /api/teams error:', err.message);
+    res.status(500).json({ error: 'Failed to save team' });
   }
-
-  saveTeams(teams);
-  res.json({ team: updatedTeam, teams });
 });
 
 /**
  * DELETE /api/teams/:id
- * Deletes a team configuration.
+ * Deletes a team configuration from MongoDB.
  */
-app.delete('/api/teams/:id', (req, res) => {
+app.delete('/api/teams/:id', async (req, res) => {
   const { id } = req.params;
-  let teams = loadTeams();
-  
-  const originalLength = teams.length;
-  teams = teams.filter(t => t.id !== id);
 
-  if (teams.length === originalLength) {
-    return res.status(404).json({ error: 'Team not found' });
+  try {
+    const collection = await getTeamsCollection();
+    const deleteResult = await collection.deleteOne({ id });
+
+    if (deleteResult.deletedCount === 0) {
+      return res.status(404).json({ error: 'Team not found' });
+    }
+
+    // Ensure at least one active team remains if teams exist
+    let teams = await collection.find({}).toArray();
+    if (teams.length > 0 && !teams.some(t => t.active)) {
+      await collection.updateOne({ id: teams[0].id }, { $set: { active: true } });
+      teams = await collection.find({}).toArray();
+    }
+
+    res.json({ success: true, teams });
+  } catch (err) {
+    console.error('[server] DELETE /api/teams error:', err.message);
+    res.status(500).json({ error: 'Failed to delete team' });
   }
-
-  // Ensure at least one active team remains if teams exist
-  if (teams.length > 0 && !teams.some(t => t.active)) {
-    teams[0].active = true;
-  }
-
-  saveTeams(teams);
-  res.json({ success: true, teams });
 });
 
 // ── Background Cron Scheduler ──────────────────────────────────────────────
