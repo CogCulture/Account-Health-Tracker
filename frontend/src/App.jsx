@@ -107,7 +107,6 @@ export default function App() {
   // ── Select a client → fetch + calculate ───────────────────────────────────
   const handleSelectClient = useCallback(async (clientKey) => {
     setSelectedClient(clientKey);
-    setScoreData(null);
     setCalcError('');
     setView('dashboard');
 
@@ -119,6 +118,15 @@ export default function App() {
     const { tabName, dailyId, jobId, label } = clientEntry;
     const cacheKey = `${clientKey}__${month}__${year}`;
 
+    // ── Use cached full data if already loaded by the overview batch ──────────
+    if (clientFullData[cacheKey]) {
+      setScoreData(clientFullData[cacheKey]);
+      setCalcStatus('idle');
+      return;
+    }
+
+    // ── Otherwise fetch fresh from Google Sheets ──────────────────────────────
+    setScoreData(null);
     setCalcStatus('loading');
 
     try {
@@ -145,7 +153,7 @@ export default function App() {
       setErrorMsg(err.message);
       setIsErrorOpen(true);
     }
-  }, [month, year, clients]);
+  }, [month, year, clients, clientFullData]);
 
   const handleReload = useCallback(async () => {
     setCalcStatus('loading');
