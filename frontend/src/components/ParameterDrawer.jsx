@@ -34,7 +34,7 @@ function StatCard({ label, value, color, sub }) {
 
 /* ── Parameter detail bodies ─────────────────────────────────────────── */
 
-function P1Detail({ metrics }) {
+function P1Detail({ metrics, isNoInPersonBrand }) {
   const { inPersonCalls, attendanceRate, totalWorkingDays } = metrics.p1;
   const attended = Math.round((attendanceRate / 100) * totalWorkingDays);
   const missed   = totalWorkingDays - attended;
@@ -46,7 +46,7 @@ function P1Detail({ metrics }) {
     <>
       <SectionTitle>This month at a glance</SectionTitle>
       <div style={{ display: 'flex', gap: '0.75rem' }}>
-        <StatCard label="In-person calls" value={inPersonCalls} color={callColor} />
+        {!isNoInPersonBrand && <StatCard label="In-person calls" value={inPersonCalls} color={callColor} />}
         <StatCard label="Working days" value={totalWorkingDays} color="var(--text-primary)" />
       </div>
 
@@ -69,9 +69,9 @@ function P1Detail({ metrics }) {
         {attended > 0
           ? `JSR attended ${attended} out of ${totalWorkingDays} scheduled calls this month.`
           : 'No JSR call attendance was recorded for this month.'}
-        {inPersonCalls > 0
+        {!isNoInPersonBrand && (inPersonCalls > 0
           ? ` ${inPersonCalls} of those were in-person meetings.`
-          : ' All calls were virtual (no in-person meetings logged).'}
+          : ' All calls were virtual (no in-person meetings logged).')}
       </p>
     </>
   );
@@ -267,12 +267,7 @@ function P4Detail({ metrics }) {
         {jobs.length === 0 && <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No jobs found for this period.</p>}
       </div>
 
-      {proactiveDetails.paidUnapproved > 0 && (
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', padding: '0.65rem 0.85rem', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', margin: '0.75rem 0', fontSize: '0.82rem', color: '#EF4444', lineHeight: 1.5 }}>
-          <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-          {proactiveDetails.paidUnapproved} paid job(s) were started without client approval. These are deducting points from your score.
-        </div>
-      )}
+
 
       {categoryOrder.map(cat => {
         const items = grouped[cat];
@@ -316,9 +311,9 @@ function P4Detail({ metrics }) {
 
 const PARAMS = {
   p1: { title: 'JSR Calling',              sub: 'In-person meetings + daily attendance',  weight: '25%', color: '#60a5fa' },
-  p2: { title: 'Delivery Date',            sub: 'On-time closed deliverable ratio',        weight: '30%', color: '#10B981' },
+  p2: { title: 'Delivery Date',            sub: 'On-time closed deliverable ratio',        weight: '40%', color: '#10B981' },
   p3: { title: 'Cross-Functional Calling', sub: 'Creative & Management attendance',        weight: '25%', color: '#f59e0b' },
-  p4: { title: 'Proactiveness',            sub: 'Incremental paid task index',             weight: '20%', color: '#a78bfa' },
+  p4: { title: 'Proactiveness',            sub: 'Incremental paid task index',             weight: '10%', color: '#a78bfa' },
 };
 
 export default function ParameterDrawer({ param, scoreData, onClose }) {
@@ -331,7 +326,18 @@ export default function ParameterDrawer({ param, scoreData, onClose }) {
     return () => document.removeEventListener('keydown', handler);
   }, [isOpen, onClose]);
 
-  const meta    = param ? PARAMS[param] : null;
+  const lowerName = (scoreData?.clientName || '').toLowerCase().trim();
+  const isNoInPersonBrand = lowerName.startsWith('digital connexion') ||
+                            lowerName.startsWith('bpl') ||
+                            lowerName.startsWith('kelvinator') ||
+                            lowerName.startsWith('kalvinator');
+
+  const metaRaw = param ? PARAMS[param] : null;
+  const meta = metaRaw ? {
+    ...metaRaw,
+    sub: (param === 'p1' && isNoInPersonBrand) ? 'Daily JSR call attendance' : metaRaw.sub
+  } : null;
+
   const score   = param ? scoreData.scores[param] : 0;
   const insight = param ? scoreData.insights[param] : '';
 
@@ -412,7 +418,7 @@ export default function ParameterDrawer({ param, scoreData, onClose }) {
 
             {/* Content */}
             <div style={{ padding: '0 1.5rem 1.5rem', overflowY: 'auto', flex: 1 }}>
-              {param === 'p1' && <P1Detail metrics={scoreData.metrics} />}
+              {param === 'p1' && <P1Detail metrics={scoreData.metrics} isNoInPersonBrand={isNoInPersonBrand} />}
               {param === 'p2' && <P2Detail metrics={scoreData.metrics} />}
               {param === 'p3' && <P3Detail metrics={scoreData.metrics} />}
               {param === 'p4' && <P4Detail metrics={scoreData.metrics} />}

@@ -13,6 +13,12 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
   const { clientName, month, year, scores, metrics, rating, badgeColor, badgeText, ratingBand, insights, solutions, escalationCount, pendingLargeJobs } = scoreData;
   const monthName = MONTH_NAMES[month];
 
+  const lowerName = (clientName || '').toLowerCase().trim();
+  const isNoInPersonBrand = lowerName.startsWith('digital connexion') ||
+                            lowerName.startsWith('bpl') ||
+                            lowerName.startsWith('kelvinator') ||
+                            lowerName.startsWith('kalvinator');
+
   const [isSaved, setIsSaved] = useState(false);
   const [openParam, setOpenParam] = useState(null);
   const [priorityModal, setPriorityModal] = useState(null);
@@ -94,42 +100,62 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
     const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
     const textColor = isDark ? '#94a3b8' : '#475569';
 
-    // Inline plugin to draw data values above points/bars
-    const datalabelsPlugin = {
-      id: 'datalabels',
+    // Inline plugin to draw data values above vertical bars
+    const verticalDatalabelsPlugin = {
+      id: 'verticalDatalabels',
       afterDatasetsDraw(chart) {
-        const { ctx } = chart;
+        const { ctx, data } = chart;
         ctx.save();
-        ctx.font = 'bold 11px Outfit';
+        ctx.font = 'bold 11px Outfit, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        
-        chart.data.datasets.forEach((dataset, datasetIndex) => {
-          const meta = chart.getDatasetMeta(datasetIndex);
-          meta.data.forEach((element, index) => {
-            const dataValue = dataset.data[index];
-            if (dataValue === undefined || dataValue === null) return;
+        chart.getDatasetMeta(0).data.forEach((element, index) => {
+          const value = data.datasets[0].data[index];
+          if (value !== undefined && value !== null) {
             const { x, y } = element.tooltipPosition();
             ctx.fillStyle = '#1e293b';
-            ctx.fillText(dataValue, x, y - 6);
-          });
+            ctx.fillText(value, x, y - 6);
+          }
         });
         ctx.restore();
       }
     };
 
-    // ── 1. STATUS CHART (Line / Area) ──
+    // Inline plugin to draw data values next to horizontal bars
+    const horizontalDatalabelsPlugin = {
+      id: 'horizontalDatalabels',
+      afterDatasetsDraw(chart) {
+        const { ctx, data } = chart;
+        ctx.save();
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 11px Outfit, sans-serif';
+        chart.getDatasetMeta(0).data.forEach((element, index) => {
+          const value = data.datasets[0].data[index];
+          if (value !== undefined && value !== null) {
+            const { x, y } = element.tooltipPosition();
+            ctx.fillStyle = '#1e293b';
+            ctx.fillText(value, x + 6, y);
+          }
+        });
+        ctx.restore();
+      }
+    };
+
+    // ── 1. STATUS CHART (Vertical Bar) ──
     if (statusCanvasRef.current) {
-      const statusCounts = {};
+      if (statusChartInstanceRef.current) {
+        statusChartInstanceRef.current.destroy();
+      }
+
+      const statusMap = {};
       jobs.forEach(j => {
-        const stat = (j.status || 'Not Started').toString().trim();
-        if (stat) {
-          statusCounts[stat] = (statusCounts[stat] || 0) + 1;
-        }
+        const s = j.status || 'Unknown';
+        statusMap[s] = (statusMap[s] || 0) + 1;
       });
 
       const STATUS_ORDER = ['Closed', 'Completed', 'CTR (Client to Revert)', 'In Progress', 'ATR (Agency to Revert)', 'Not Started', 'Hold', 'Not Required Anymore'];
-      const sortedStatuses = Object.keys(statusCounts).sort((a, b) => {
+      const sortedStatuses = Object.keys(statusMap).sort((a, b) => {
         let idxA = STATUS_ORDER.findIndex(s => s.toLowerCase() === a.toLowerCase());
         let idxB = STATUS_ORDER.findIndex(s => s.toLowerCase() === b.toLowerCase());
         if (idxA === -1) idxA = 999;
@@ -138,40 +164,31 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
       });
 
       const labels = sortedStatuses;
-      const dataPoints = sortedStatuses.map(s => statusCounts[s]);
-
-      if (statusChartInstanceRef.current) {
-        statusChartInstanceRef.current.destroy();
-      }
+      const dataPoints = sortedStatuses.map(s => statusMap[s]);
 
       const ctx = statusCanvasRef.current.getContext('2d');
       statusChartInstanceRef.current = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: labels,
+          labels,
           datasets: [{
-            label: 'Task Count',
             data: dataPoints,
-            backgroundColor: sortedStatuses.map(s => {
-              const STATUS_COLORS = {
-                'closed': 'rgba(21, 128, 61, 0.85)',
-                'completed': 'rgba(34, 197, 94, 0.85)',
-                'ctr (client to revert)': 'rgba(168, 85, 247, 0.85)',
-                'in progress': 'rgba(59, 130, 246, 0.85)',
-                'atr (agency to revert)': 'rgba(234, 179, 8, 0.85)',
-                'not started': 'rgba(99, 102, 241, 0.85)',
-                'hold': 'rgba(107, 114, 128, 0.85)',
-                'not required anymore': 'rgba(203, 213, 225, 0.85)'
-              };
-              const key = s.toLowerCase();
-              return STATUS_COLORS[key] || '#0e7490';
+            backgroundColor: labels.map(l => {
+              const lower = l.toLowerCase();
+              if (lower === 'closed' || lower === 'completed') return '#4a8b6f'; // dull sage green
+              if (lower === 'in progress' || lower === 'wip' || lower === 'active') return '#5a7fa4'; // dull steel blue
+              if (lower === 'paused' || lower === 'deferred') return '#d19a66'; // dull orange/amber
+              if (lower === 'cancelled') return '#b35d5d'; // dull red
+              if (lower === 'ctr (client to revert)') return '#856a9e'; // dull slate purple
+              if (lower === 'not required anymore') return '#94a3b8'; // dull slate gray
+              return '#707d8c'; // dull gray
             }),
             borderRadius: 6,
             borderWidth: 0,
-            barThickness: 35,
+            barThickness: 22,
           }]
         },
-        plugins: [datalabelsPlugin],
+        plugins: [verticalDatalabelsPlugin],
         options: {
           responsive: true,
           maintainAspectRatio: false,
@@ -182,7 +199,12 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
           scales: {
             x: {
               grid: { display: false },
-              ticks: { color: textColor, font: { family: 'Outfit', size: 10 } }
+              ticks: { 
+                color: textColor, 
+                font: { family: 'Outfit', size: 10 },
+                maxRotation: 20,
+                minRotation: 20
+              }
             },
             y: {
               grid: { color: gridColor },
@@ -197,53 +219,19 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
 
     // ── 2. PRIORITY CHART (Horizontal Bar) ──
     if (priorityCanvasRef.current) {
-      const priorityJobMap = { XXL: [], XL: [], L: [], M: [], S: [] };
-      jobs.forEach(j => {
-        const p = (j.priority || '').toString().trim().toUpperCase();
-        if (priorityJobMap[p] !== undefined) {
-          priorityJobMap[p].push(j);
-        } else {
-          // any other priority still tracked for click
-          if (!priorityJobMap[p]) priorityJobMap[p] = [];
-          priorityJobMap[p].push(j);
-        }
-      });
-
-      // Fixed order: XXL, XL, L, M first, then any extras — sorted highest to lowest by count
-      const fixedOrder = ['XXL', 'XL', 'L', 'M', 'S'];
-      const extras = Object.keys(priorityJobMap)
-        .filter(p => !fixedOrder.includes(p))
-        .sort((a, b) => priorityJobMap[b].length - priorityJobMap[a].length);
-      const sortedPriorities = [...fixedOrder, ...extras];
-
-      const labels = sortedPriorities;
-      const dataPoints = sortedPriorities.map(p => priorityJobMap[p].length);
-
       if (priorityChartInstanceRef.current) {
         priorityChartInstanceRef.current.destroy();
       }
 
-      const horizontalDatalabelsPlugin = {
-        id: 'horizontalDatalabels',
-        afterDatasetsDraw(chart) {
-          const { ctx } = chart;
-          ctx.save();
-          ctx.font = 'bold 11px Outfit';
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'middle';
-          chart.data.datasets.forEach((dataset, datasetIndex) => {
-            const meta = chart.getDatasetMeta(datasetIndex);
-            meta.data.forEach((element, index) => {
-              const value = dataset.data[index];
-              if (value === undefined || value === null) return;
-              const { x, y } = element.tooltipPosition();
-              ctx.fillStyle = '#1e293b';
-              ctx.fillText(value, x + 6, y);
-            });
-          });
-          ctx.restore();
-        }
-      };
+      const priorityJobMap = { XXL: [], XL: [], L: [], M: [], S: [] };
+      jobs.forEach(j => {
+        const p = (j.priority || '').toString().trim().toUpperCase();
+        if (priorityJobMap[p]) priorityJobMap[p].push(j);
+      });
+
+      const sortedPriorities = ['XXL', 'XL', 'L', 'M', 'S'];
+      const labels = sortedPriorities;
+      const dataPoints = sortedPriorities.map(p => priorityJobMap[p].length);
 
       const ctx = priorityCanvasRef.current.getContext('2d');
       priorityChartInstanceRef.current = new Chart(ctx, {
@@ -252,17 +240,13 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
           labels,
           datasets: [{
             data: dataPoints,
-            backgroundColor: sortedPriorities.map(p => {
-              if (p === 'L') return '#0e7490';
-              if (p === 'XL') return '#f59e0b';
+            backgroundColor: labels.map(p => {
               if (p === 'XXL') return '#115e59';
+              if (p === 'XL') return '#f59e0b';
+              if (p === 'L') return '#0e7490';
+              if (p === 'M') return '#475569';
+              if (p === 'S') return '#94a3b8';
               return '#4b5563';
-            }),
-            hoverBackgroundColor: sortedPriorities.map(p => {
-              if (p === 'L') return '#22d3ee';
-              if (p === 'XL') return '#fcd34d';
-              if (p === 'XXL') return '#14b8a6';
-              return '#9ca3af';
             }),
             borderRadius: 6,
             borderWidth: 0,
@@ -278,7 +262,10 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
             if (!elements.length) return;
             const idx = elements[0].index;
             const priority = sortedPriorities[idx];
-            setPriorityModal({ priority, jobs: priorityJobMap[priority] });
+            const priorityJobs = priorityJobMap[priority] || [];
+            if (priorityJobs.length > 0) {
+              setPriorityModal({ priority, jobs: priorityJobs });
+            }
           },
           plugins: {
             legend: { display: false },
@@ -305,20 +292,20 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
 
     // ── 3. DELAY VS ON TIME CHART (Pie) ──
     if (delayCanvasRef.current) {
-      const closedJobs = jobs.filter(j => {
-        const stat = (j.status || '').toString().trim().toLowerCase();
-        return stat === 'closed' || stat === 'completed';
+      const closedJobs = jobs.filter(row => {
+        const status = (row.status || '').toString().trim().toLowerCase();
+        return status === 'closed' || status === 'completed';
       });
 
       let onTime = 0;
       let delayed = 0;
       let unEvaluated = 0;
 
-      closedJobs.forEach(j => {
-        if (j.clientTimeline && j.deliveryDate) {
-          const t = new Date(j.clientTimeline).getTime();
-          const d = new Date(j.deliveryDate).getTime();
-          if (d <= t) onTime++;
+      closedJobs.forEach(row => {
+        const deadline = row.clientTimeline ? new Date(row.clientTimeline) : null;
+        const actualDate = row.deliveryDate ? new Date(row.deliveryDate) : null;
+        if (deadline && actualDate) {
+          if (actualDate.getTime() <= deadline.getTime()) onTime++;
           else delayed++;
         } else {
           unEvaluated++;
@@ -397,7 +384,9 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
   const ParamCard = ({ id, title, sub, score }) => {
     const statPills = [];
     if (id === 'p1') {
-      statPills.push({ label: 'In-person calls', value: metrics.p1.inPersonCalls });
+      if (!isNoInPersonBrand) {
+        statPills.push({ label: 'In-person calls', value: metrics.p1.inPersonCalls });
+      }
       statPills.push({ label: 'On-call attendance', value: `${Math.round(metrics.p1.attendanceRate)}%` });
     }
     if (id === 'p3') {
@@ -662,7 +651,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
 
         {/* 4 Parameter Cards */}
         <div className="parameters-grid">
-          <ParamCard id="p1" title="JSR Calling" sub="In-person meetings + daily attendance" score={scores.p1} />
+          <ParamCard id="p1" title="JSR Calling" sub={isNoInPersonBrand ? "Daily JSR call attendance" : "In-person meetings + daily attendance"} score={scores.p1} />
           <ParamCard id="p2" title="Delivery Date" sub="Ratio of on-time closed deliverables" score={scores.p2} />
           <ParamCard id="p3" title="Cross-Functional Calling" sub="Creative & Management attendances" score={scores.p3} />
           <ParamCard id="p4" title="Proactiveness" sub="Incremental paid task index" score={scores.p4} />

@@ -87,8 +87,17 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   const inPersonCalls  = inPersonRows.length;
   let inPersonPoints = 0;
 
-  const isBharti = (clientName || '').toLowerCase().trim().startsWith('bharti');
-  if (isBharti) {
+  const lowerName = (clientName || '').toLowerCase().trim();
+  const isNoInPersonBrand = lowerName.startsWith('digital connexion') ||
+                            lowerName.startsWith('bpl') ||
+                            lowerName.startsWith('kelvinator') ||
+                            lowerName.startsWith('kalvinator');
+
+  const isBharti = lowerName.startsWith('bharti');
+  
+  if (isNoInPersonBrand) {
+    inPersonPoints = 0;
+  } else if (isBharti) {
     inPersonPoints = Math.min(5, inPersonCalls);
   } else {
     let deepakshiPoints = 0;
@@ -109,11 +118,20 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
 
   const attendanceRate = totalWorkingDays > 0 ? (attendanceRows / totalWorkingDays) * 100 : 0;
   let attendancePoints = 0;
-  if (attendanceRate >= 90)      attendancePoints = 5;
-  else if (attendanceRate >= 75) attendancePoints = 4;
-  else if (attendanceRate >= 60) attendancePoints = 3;
-  else if (attendanceRate >= 50) attendancePoints = 2;
-  else                           attendancePoints = 0;
+  
+  if (isNoInPersonBrand) {
+    if (attendanceRate >= 90)      attendancePoints = 10;
+    else if (attendanceRate >= 75) attendancePoints = 8;
+    else if (attendanceRate >= 60) attendancePoints = 6;
+    else if (attendanceRate >= 50) attendancePoints = 4;
+    else                           attendancePoints = 0;
+  } else {
+    if (attendanceRate >= 90)      attendancePoints = 5;
+    else if (attendanceRate >= 75) attendancePoints = 4;
+    else if (attendanceRate >= 60) attendancePoints = 3;
+    else if (attendanceRate >= 50) attendancePoints = 2;
+    else                           attendancePoints = 0;
+  }
 
   const p1Score = inPersonPoints + attendancePoints;
 
@@ -321,14 +339,14 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
 
   // --- AUTO-GENERATED INSIGHTS ---
   const insights = {
-    p1: generateP1Insight(inPersonCalls, attendanceRate, totalWorkingDays),
+    p1: generateP1Insight(isNoInPersonBrand, inPersonCalls, attendanceRate, totalWorkingDays),
     p2: generateP2Insight(p2Score, totalClosed, onTimeRate, onTimeJobs),
     p3: generateP3Insight(creativeAttendDays, managementAttendDays, filteredDaily.length),
     p4: generateP4Insight(p4Score, rawProactiveScore, proactiveDetails)
   };
 
   const solutions = {
-    p1: generateP1Solution(isBharti, inPersonCalls, deepakshiInPerson, otherInPerson, attendanceRate),
+    p1: generateP1Solution(isBharti, isNoInPersonBrand, inPersonCalls, deepakshiInPerson, otherInPerson, attendanceRate),
     p2: generateP2Solution(p2Score, totalClosed),
     p3: generateP3Solution(creativeAttendDays, managementAttendDays),
     p4: generateP4Solution(p4Score, proactiveDetails),
@@ -404,25 +422,31 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   };
 }
 
-function generateP1Insight(inPerson, attendanceRate, workingDays) {
+function generateP1Insight(isNoInPersonBrand, inPerson, attendanceRate, workingDays) {
   if (workingDays === 0) {
     return 'No daily log data was found for the client in this period.';
   }
   let insight = '';
-  if (inPerson >= 3) {
-    insight += `Completed ${inPerson} in-person calls this month. `;
-  } else if (inPerson >= 1) {
-    insight += `Logged ${inPerson} in-person call(s) this month. `;
+  if (isNoInPersonBrand) {
+    insight += 'In-person calling is not applicable for this brand. ';
   } else {
-    insight += 'No in-person meetings logged this month. ';
+    if (inPerson >= 3) {
+      insight += `Completed ${inPerson} in-person calls this month. `;
+    } else if (inPerson >= 1) {
+      insight += `Logged ${inPerson} in-person call(s) this month. `;
+    } else {
+      insight += 'No in-person meetings logged this month. ';
+    }
   }
   insight += `On-call attendance was ${Math.round(attendanceRate)}% across ${workingDays} working days.`;
   return insight;
 }
 
-function generateP1Solution(isBharti, inPersonCalls, deepakshi, others, attendanceRate) {
+function generateP1Solution(isBharti, isNoInPersonBrand, inPersonCalls, deepakshi, others, attendanceRate) {
   const tips = [];
-  if (isBharti) {
+  if (isNoInPersonBrand) {
+    // No in-person tips
+  } else if (isBharti) {
     if (inPersonCalls < 5) {
       tips.push(`Schedule ${5 - inPersonCalls} more in-person meeting(s) to reach the 5-call threshold for full points.`);
     }
@@ -432,7 +456,12 @@ function generateP1Solution(isBharti, inPersonCalls, deepakshi, others, attendan
   }
   if (attendanceRate < 90) tips.push(`Improve daily JSR call attendance from ${Math.round(attendanceRate)}% to 90%+ by setting standing calendar reminders.`);
   if (attendanceRate < 50) tips.push('Attendance is critical — establish a fixed daily sync time with the client immediately.');
-  if (tips.length === 0) tips.push('Keep up the consistency. Maintain required in-person calls and 90%+ attendance each month.');
+  if (tips.length === 0) {
+    tips.push(isNoInPersonBrand 
+      ? 'Daily call attendance is solid. Maintain 90%+ attendance each month.' 
+      : 'Keep up the consistency. Maintain required in-person calls and 90%+ attendance each month.'
+    );
+  }
   return tips;
 }
 
