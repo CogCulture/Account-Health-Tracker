@@ -263,34 +263,20 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   });
 
   // Apply count-based scoring
-  // Paid (Approved)
-  if (proactiveDetails.paidApproved >= 5) {
-    rawProactiveScore += 4;
-  } else if (proactiveDetails.paidApproved >= 3) {
-    rawProactiveScore += 2;
-  } else if (proactiveDetails.paidApproved >= 1) {
-    rawProactiveScore += 1;
-  }
+  // Initiative Paid (Approved) — max 2 pts
+  let initPaidApprovedPts = 0;
+  if (proactiveDetails.initPaidApproved >= 2) initPaidApprovedPts = 2;
+  else if (proactiveDetails.initPaidApproved === 1) initPaidApprovedPts = 1;
 
-  // Paid (Not Approved) - negative
-  if (proactiveDetails.paidUnapproved >= 5) {
-    rawProactiveScore -= 5;
-  } else if (proactiveDetails.paidUnapproved >= 3) {
-    rawProactiveScore -= 3;
-  } else if (proactiveDetails.paidUnapproved >= 1) {
-    rawProactiveScore -= 2;
-  }
+  // Paid (Approved) — max 3 pts
+  let paidApprovedPts = 0;
+  if (proactiveDetails.paidApproved >= 3)      paidApprovedPts = 3;
+  else if (proactiveDetails.paidApproved === 2) paidApprovedPts = 2;
+  else if (proactiveDetails.paidApproved === 1) paidApprovedPts = 1;
 
-  // Initiative-Paid/Approved
-  if (proactiveDetails.initPaidApproved >= 5) {
-    rawProactiveScore += 5;
-  } else if (proactiveDetails.initPaidApproved >= 3) {
-    rawProactiveScore += 3;
-  } else if (proactiveDetails.initPaidApproved >= 1) {
-    rawProactiveScore += 2;
-  }
-
-  // Initiative-Unpaid/Unapproved — no points awarded
+  // Raw score out of 5, then scale to 10
+  const rawOutOf5 = initPaidApprovedPts + paidApprovedPts;
+  rawProactiveScore = rawOutOf5 * 2; // scale to out of 10
 
   const p4Score = Math.max(0, Math.min(10, rawProactiveScore));
 
@@ -303,11 +289,11 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   // --- TOTAL HEALTH SCORE ---
   const totalScore = p1Score + p2Score + p3Score + p4Score;
   // Calculate weighted percentage based on rules:
-  // JSR Calling (p1) - 25% weightage
-  // Delivery Date (p2) - 30% weightage
-  // Cross Functional (p3) - 25% weightage
-  // Proactiveness (p4) - 20% weightage
-  const weightedPercentage = (p1Score * 2.5) + (p2Score * 3.0) + (p3Score * 2.5) + (p4Score * 2.0);
+  // JSR Calling (p1)       - 25% weightage
+  // Delivery Date (p2)     - 40% weightage
+  // Cross Functional (p3)  - 25% weightage
+  // Proactiveness (p4)     - 10% weightage
+  const weightedPercentage = (p1Score * 2.5) + (p2Score * 4.0) + (p3Score * 2.5) + (p4Score * 1.0);
   const totalPercentage = Math.round(weightedPercentage);
 
   // Rating and Color configurations based on percentage
@@ -513,29 +499,26 @@ function generateP4Insight(score, rawScore, details) {
   }
   let parts = [];
   if (initPaidApproved > 0) {
-    let pts = initPaidApproved >= 5 ? 5 : initPaidApproved >= 3 ? 3 : 2;
+    const pts = initPaidApproved >= 2 ? 2 : 1;
     parts.push(`${initPaidApproved} Initiative-Paid/Approved (+${pts} pts)`);
   }
   if (paidApproved > 0) {
-    let pts = paidApproved >= 5 ? 4 : paidApproved >= 3 ? 2 : 1;
+    const pts = paidApproved >= 3 ? 3 : paidApproved === 2 ? 2 : 1;
     parts.push(`${paidApproved} Paid (Approved) (+${pts} pts)`);
   }
-  if (paidUnapproved > 0) {
-    let pts = paidUnapproved >= 5 ? -5 : paidUnapproved >= 3 ? -3 : -2;
-    parts.push(`${paidUnapproved} Paid (Not Approved) (${pts} pts)`);
-  }
+  if (paidUnapproved > 0) parts.push(`${paidUnapproved} Paid (Not Approved) (0 pts — not scored)`);
   if (initPaidUnapproved > 0) parts.push(`${initPaidUnapproved} Initiative-Unpaid/Unapproved (0 pts)`);
   if (retainer > 0) parts.push(`${retainer} Retainer (0 pts)`);
   return `Logged ${parts.join(', ')}.`;
 }
 
 function generateP4Solution(score, details) {
-  const { paidUnapproved, initPaidApproved } = details;
+  const { paidApproved, initPaidApproved } = details;
   const tips = [];
-  if (paidUnapproved > 0) tips.push(`${paidUnapproved} job(s) were started without client approval — always get sign-off before commencing paid work.`);
-  if (initPaidApproved < 3) tips.push('Pitch more Initiative-Paid/Approved projects to the client — these contribute the highest points.');
-  if (score < 5) tips.push('Present at least one new initiative idea per month and secure written client approval before beginning.');
-  if (score >= 8 && paidUnapproved === 0) tips.push('Strong proactiveness. Keep generating approved initiatives to sustain top scores.');
+  if (initPaidApproved < 2) tips.push(`Log ${2 - initPaidApproved} more Initiative-Paid/Approved project(s) to reach the 2-initiative threshold for full points.`);
+  if (paidApproved < 3) tips.push(`Log ${3 - paidApproved} more Paid (Approved) job(s) to reach the 3-job threshold for full points.`);
+  if (score < 6) tips.push('Present at least one new initiative idea per month and secure written client approval before beginning.');
+  if (score >= 8) tips.push('Strong proactiveness. Keep generating approved initiatives and paid work to sustain top scores.');
   if (tips.length === 0) tips.push('Continue converting retainer work into initiative-led proposals for maximum score impact.');
   return tips;
 }

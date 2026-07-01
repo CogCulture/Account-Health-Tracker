@@ -182,25 +182,41 @@ export default function App() {
 
   // ── Batch-load all clients for Overview Dashboard ────────────────────────
   const batchLoadAllClients = useCallback(async (clientList, onClientDone) => {
-    await Promise.allSettled(clientList.map(async (clientEntry) => {
-      const { key, tabName, dailyId, jobId, label } = clientEntry;
-      const cacheKey = `${key}__${month}__${year}`;
-      try {
-        const [dailyRaw, jobRaw] = await Promise.all([
-          fetchSheetData(dailyId, tabName),
-          fetchSheetData(jobId, tabName),
-        ]);
-        const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
-        const jobRows   = parseJobTrackerRows(jobRaw, tabName);
-        const result    = calculateHealthScore(dailyRows, jobRows, label, month, year);
-        setClientScores(prev => ({ ...prev, [cacheKey]: { percentage: result.scores.percentage, rating: result.rating } }));
-        setClientFullData(prev => ({ ...prev, [cacheKey]: result }));
-      } catch (err) {
-        console.error(`[batchLoad] Failed for ${label}:`, err);
-      } finally {
-        onClientDone(key);
+    // Process in chunks of 3 to avoid hitting the Google Sheets
+    // "60 read requests per minute per user" quota limit.
+    const CHUNK_SIZE = 3;
+    const DELAY_MS   = 1200; // ~1.2s between chunks → safely under 60 req/min
+
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    for (let i = 0; i < clientList.length; i += CHUNK_SIZE) {
+      const chunk = clientList.slice(i, i + CHUNK_SIZE);
+
+      await Promise.allSettled(chunk.map(async (clientEntry) => {
+        const { key, tabName, dailyId, jobId, label } = clientEntry;
+        const cacheKey = `${key}__${month}__${year}`;
+        try {
+          const [dailyRaw, jobRaw] = await Promise.all([
+            fetchSheetData(dailyId, tabName),
+            fetchSheetData(jobId, tabName),
+          ]);
+          const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
+          const jobRows   = parseJobTrackerRows(jobRaw, tabName);
+          const result    = calculateHealthScore(dailyRows, jobRows, label, month, year);
+          setClientScores(prev => ({ ...prev, [cacheKey]: { percentage: result.scores.percentage, rating: result.rating } }));
+          setClientFullData(prev => ({ ...prev, [cacheKey]: result }));
+        } catch (err) {
+          console.error(`[batchLoad] Failed for ${label}:`, err);
+        } finally {
+          onClientDone(key);
+        }
+      }));
+
+      // Wait between chunks (skip delay after the last chunk)
+      if (i + CHUNK_SIZE < clientList.length) {
+        await sleep(DELAY_MS);
       }
-    }));
+    }
   }, [month, year]);
 
   // Re-calculate when month/year changes if a client is already selected
