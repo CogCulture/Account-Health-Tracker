@@ -871,7 +871,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
             <div style={{ overflowY: 'auto', padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {(scoreData?.jobsList?.filter(row => {
                 const val = (row.escalation || '').toString().trim().toLowerCase();
-                return val && val !== '' && val !== 'no' && val !== 'n' && val !== 'false' && val !== '0' && val !== 'none' && val !== 'n/a';
+                return val && val !== '' && val !== 'no' && val !== 'n' && val !== 'na' && val !== 'false' && val !== '0' && val !== 'none' && val !== 'n/a' && val !== '-';
               }) || []).map((job, i) => (
                 <div key={i} style={{
                   padding: '1rem',

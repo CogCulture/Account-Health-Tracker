@@ -301,7 +301,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   // --- ESCALATION COUNT ---
   const escalationCount = filteredJobs.filter(row => {
     const val = (row.escalation || '').toString().trim().toLowerCase();
-    return val && val !== '' && val !== 'no' && val !== 'n' && val !== 'false' && val !== '0' && val !== 'none' && val !== 'n/a';
+    return val && val !== '' && val !== 'no' && val !== 'n' && val !== 'na' && val !== 'false' && val !== '0' && val !== 'none' && val !== 'n/a' && val !== '-';
   }).length;
 
   // --- TOTAL HEALTH SCORE ---
