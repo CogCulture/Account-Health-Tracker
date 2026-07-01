@@ -98,7 +98,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
       afterDatasetsDraw(chart) {
         const { ctx } = chart;
         ctx.save();
-        ctx.font = 'bold 11px Outfit';
+        ctx.font = 'bold 12px Outfit';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         
@@ -108,7 +108,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
             const dataValue = dataset.data[index];
             if (dataValue === undefined || dataValue === null) return;
             const { x, y } = element.tooltipPosition();
-            ctx.fillStyle = isDark ? '#f8fafc' : '#0f172a';
+            ctx.fillStyle = '#0f172a';
             ctx.fillText(dataValue, x, y - 6);
           });
         });
@@ -226,7 +226,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
         afterDatasetsDraw(chart) {
           const { ctx } = chart;
           ctx.save();
-          ctx.font = 'bold 11px Outfit';
+          ctx.font = 'bold 12px Outfit';
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
           chart.data.datasets.forEach((dataset, datasetIndex) => {
@@ -235,7 +235,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
               const value = dataset.data[index];
               if (value === undefined || value === null) return;
               const { x, y } = element.tooltipPosition();
-              ctx.fillStyle = isDark ? '#f8fafc' : '#0f172a';
+              ctx.fillStyle = '#0f172a';
               ctx.fillText(value, x + 6, y);
             });
           });
