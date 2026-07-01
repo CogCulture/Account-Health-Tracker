@@ -150,7 +150,20 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
           datasets: [{
             label: 'Task Count',
             data: dataPoints,
-            backgroundColor: '#0e7490',
+            backgroundColor: sortedStatuses.map(s => {
+              const STATUS_COLORS = {
+                'closed': 'rgba(21, 128, 61, 0.85)',
+                'completed': 'rgba(34, 197, 94, 0.85)',
+                'ctr (client to revert)': 'rgba(168, 85, 247, 0.85)',
+                'in progress': 'rgba(59, 130, 246, 0.85)',
+                'atr (agency to revert)': 'rgba(234, 179, 8, 0.85)',
+                'not started': 'rgba(99, 102, 241, 0.85)',
+                'hold': 'rgba(107, 114, 128, 0.85)',
+                'not required anymore': 'rgba(203, 213, 225, 0.85)'
+              };
+              const key = s.toLowerCase();
+              return STATUS_COLORS[key] || '#0e7490';
+            }),
             borderRadius: 6,
             borderWidth: 0,
             barThickness: 35,
@@ -162,7 +175,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
           maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
-            tooltip: { enabled: true }
+            tooltip: { enabled: false }
           },
           scales: {
             x: {
@@ -267,7 +280,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
           },
           plugins: {
             legend: { display: false },
-            tooltip: { enabled: true }
+            tooltip: { enabled: false }
           },
           onHover: (event, elements) => {
             event.native.target.style.cursor = elements.length ? 'pointer' : 'default';
