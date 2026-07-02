@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import dns from 'dns';
 
 /**
  * Sends an urgent notification email to management about a pending XL/XXL job.
@@ -31,7 +32,10 @@ export async function sendAlertEmail({ clientName, jobId, deliverable, priority,
     host: 'smtp.gmail.com',
     port: 587,
     secure: false, // use STARTTLS
-    family: 4, // Force IPv4 to prevent ENETUNREACH on Render's network
+    family: 4, // Force IPv4 connection
+    lookup: (hostname, options, callback) => {
+      dns.lookup(hostname, { family: 4 }, callback);
+    },
     auth: {
       user: smtpUser,
       pass: smtpPass,
@@ -123,7 +127,10 @@ export async function sendClientSummaryEmail({ clientName, jobs }) {
     host: 'smtp.gmail.com',
     port: 587,
     secure: false, // use STARTTLS
-    family: 4, // Force IPv4 to prevent ENETUNREACH on Render's network
+    family: 4, // Force IPv4 connection
+    lookup: (hostname, options, callback) => {
+      dns.lookup(hostname, { family: 4 }, callback);
+    },
     auth: {
       user: smtpUser,
       pass: smtpPass,
