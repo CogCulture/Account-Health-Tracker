@@ -129,7 +129,7 @@ export function generateHealthReportPDF(data) {
       score: `${scores.p2} / 10`
     },
     {
-      name: '3. Cross-Functional Calling',
+      name: '3. Cross-Functional Meeting',
       summary: `Creative: ${metrics.p3.hasCreativeAttend ? 'Attended' : 'Absent'} | Management: ${metrics.p3.hasManagementAttend ? 'Attended' : 'Absent'}`,
       score: `${scores.p3} / 10`
     },

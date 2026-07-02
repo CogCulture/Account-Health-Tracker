@@ -653,7 +653,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
         <div className="parameters-grid">
           <ParamCard id="p1" title="JSR Calling" sub={isNoInPersonBrand ? "Daily JSR call attendance" : "In-person meetings + daily attendance"} score={scores.p1} />
           <ParamCard id="p2" title="Delivery Date" sub="Ratio of on-time closed deliverables" score={scores.p2} />
-          <ParamCard id="p3" title="Cross-Functional Calling" sub="Creative & Management attendances" score={scores.p3} />
+          <ParamCard id="p3" title="Cross-Functional Meeting" sub="Creative & Management attendances" score={scores.p3} />
           <ParamCard id="p4" title="Proactiveness" sub="Incremental paid task index" score={scores.p4} />
         </div>
       </div>
@@ -799,7 +799,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
               {[
                 { id: 'p1', title: 'JSR Calling', color: '#60a5fa' },
                 { id: 'p2', title: 'Delivery Date', color: '#10B981' },
-                { id: 'p3', title: 'Cross-Functional Calling', color: '#f59e0b' },
+                { id: 'p3', title: 'Cross-Functional Meeting', color: '#f59e0b' },
                 { id: 'p4', title: 'Proactiveness', color: '#a78bfa' },
               ].map(({ id, title, color }) => {
                 const tips = solutions?.[id] || [];

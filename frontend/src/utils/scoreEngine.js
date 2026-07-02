@@ -177,9 +177,24 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     };
   });
 
+  // Priority weightages for delivery scoring
+  const PRIORITY_WEIGHT = { 'XXL': 5, 'XL': 4, 'L': 3, 'M': 2, 'S': 1 };
+
+  // Weighted on-time score:
+  //   Numerator   = Σ (on-time jobs of priority P × weight of P)
+  //   Denominator = Σ (total jobs of priority P × weight of P)
+  //   Score       = (Numerator / Denominator) × 10
+  let weightedOnTime = 0;
+  let weightedTotal  = 0;
+  p2JobDetails.forEach(j => {
+    const w = PRIORITY_WEIGHT[j.priority] ?? 1; // default weight 1 for unlabelled jobs
+    weightedTotal += w;
+    if (j.onTime === true) weightedOnTime += w;
+  });
+
   const onTimeJobs = p2JobDetails.filter(j => j.onTime === true).length;
-  const onTimeRate = totalClosed > 0 ? (onTimeJobs / totalClosed) * 100 : 0;
-  const p2Score    = totalClosed > 0 ? Math.round((onTimeJobs / totalClosed) * 10 * 10) / 10 : 0;
+  const onTimeRate = weightedTotal > 0 ? (weightedOnTime / weightedTotal) * 100 : 0;
+  const p2Score    = weightedTotal > 0 ? Math.round((weightedOnTime / weightedTotal) * 10 * 10) / 10 : 0;
 
   // Priority on-time rates (for card warnings)
   const priorityWarnings = ['XL', 'XXL'].reduce((acc, pri) => {
@@ -191,7 +206,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     return acc;
   }, []);
 
-  // --- PARAMETER 3: Cross-Functional Calling (Max 10 pts) ---
+  // --- PARAMETER 3: Cross-Functional Meeting (Max 10 pts) ---
   // Determine what columns this sheet has
   const sheetHasDesignOrCreativeCol = filteredDaily.length > 0 && (
     filteredDaily[0].creativeAttendCol !== null ||

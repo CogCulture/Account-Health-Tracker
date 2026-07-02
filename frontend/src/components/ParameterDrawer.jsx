@@ -312,7 +312,7 @@ function P4Detail({ metrics }) {
 const PARAMS = {
   p1: { title: 'JSR Calling',              sub: 'In-person meetings + daily attendance',  weight: '25%', color: '#60a5fa' },
   p2: { title: 'Delivery Date',            sub: 'On-time closed deliverable ratio',        weight: '40%', color: '#10B981' },
-  p3: { title: 'Cross-Functional Calling', sub: 'Creative & Management attendance',        weight: '25%', color: '#f59e0b' },
+  p3: { title: 'Cross-Functional Meeting', sub: 'Creative & Management attendance',        weight: '25%', color: '#f59e0b' },
   p4: { title: 'Proactiveness',            sub: 'Incremental paid task index',             weight: '10%', color: '#a78bfa' },
 };
 
