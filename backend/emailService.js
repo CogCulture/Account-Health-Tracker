@@ -29,8 +29,9 @@ export async function sendAlertEmail({ clientName, jobId, deliverable, priority,
 
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
+    port: 587,
+    secure: false, // use STARTTLS
+    family: 4, // Force IPv4 to prevent ENETUNREACH on Render's network
     auth: {
       user: smtpUser,
       pass: smtpPass,
@@ -120,8 +121,9 @@ export async function sendClientSummaryEmail({ clientName, jobs }) {
 
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
+    port: 587,
+    secure: false, // use STARTTLS
+    family: 4, // Force IPv4 to prevent ENETUNREACH on Render's network
     auth: {
       user: smtpUser,
       pass: smtpPass,
