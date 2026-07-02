@@ -1,5 +1,4 @@
-import nodemailer from 'nodemailer';
-import dns from 'dns';
+import { Resend } from 'resend';
 
 /**
  * Sends an urgent notification email to management about a pending XL/XXL job.
@@ -14,13 +13,12 @@ import dns from 'dns';
  */
 export async function sendAlertEmail({ clientName, jobId, deliverable, priority, dueDate, daysRemaining, isPanasonic }) {
   const isPanasonicCheck = isPanasonic || (clientName || '').toLowerCase().includes('panasonic');
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPass = process.env.SMTP_PASS;
-  const smtpFrom = process.env.SMTP_FROM || `"Account Health Alerts" <${smtpUser}>`;
+  const resendApiKey = process.env.RESEND_API_KEY;
   const managementEmail = process.env.MANAGEMENT_EMAIL;
+  const fromEmail = process.env.SMTP_FROM || 'Account Health Alerts <onboarding@resend.dev>';
 
-  if (!smtpUser || !smtpPass) {
-    console.warn('[emailService] SMTP_USER or SMTP_PASS not set. Skipping email delivery.');
+  if (!resendApiKey) {
+    console.warn('[emailService] RESEND_API_KEY not set. Skipping email delivery.');
     return false;
   }
   if (!managementEmail) {
@@ -28,19 +26,7 @@ export async function sendAlertEmail({ clientName, jobId, deliverable, priority,
     return false;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // use STARTTLS
-    family: 4, // Force IPv4 connection
-    lookup: (hostname, options, callback) => {
-      dns.lookup(hostname, { family: 4 }, callback);
-    },
-    auth: {
-      user: smtpUser,
-      pass: smtpPass,
-    },
-  });
+  const resend = new Resend(resendApiKey);
 
   const subject = `[Urgent Alert] ${priority} Job Due in ${daysRemaining} Days for ${clientName}`;
 
@@ -87,13 +73,17 @@ export async function sendAlertEmail({ clientName, jobId, deliverable, priority,
   `;
 
   try {
-    const info = await transporter.sendMail({
-      from: smtpFrom,
+    const { error } = await resend.emails.send({
+      from: fromEmail,
       to: managementEmail,
       subject,
       html,
     });
-    console.log(`[emailService] Alert email sent for Job ${jobId} to ${managementEmail}. Message ID: ${info.messageId}`);
+    if (error) {
+      console.error(`[emailService] Resend API error for Job ${jobId}:`, error.message);
+      return false;
+    }
+    console.log(`[emailService] Alert email sent for Job ${jobId} to ${managementEmail}.`);
     return true;
   } catch (err) {
     console.error(`[emailService] Failed to send alert email for Job ${jobId}:`, err.message);
@@ -109,13 +99,12 @@ export async function sendAlertEmail({ clientName, jobId, deliverable, priority,
  * @returns {Promise<boolean>}
  */
 export async function sendClientSummaryEmail({ clientName, jobs }) {
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPass = process.env.SMTP_PASS;
-  const smtpFrom = process.env.SMTP_FROM || `"Account Health Alerts" <${smtpUser}>`;
+  const resendApiKey = process.env.RESEND_API_KEY;
   const managementEmail = process.env.MANAGEMENT_EMAIL;
+  const fromEmail = process.env.SMTP_FROM || 'Account Health Alerts <onboarding@resend.dev>';
 
-  if (!smtpUser || !smtpPass) {
-    console.warn('[emailService] SMTP_USER or SMTP_PASS not set. Skipping email delivery.');
+  if (!resendApiKey) {
+    console.warn('[emailService] RESEND_API_KEY not set. Skipping email delivery.');
     return false;
   }
   if (!managementEmail) {
@@ -123,19 +112,7 @@ export async function sendClientSummaryEmail({ clientName, jobs }) {
     return false;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // use STARTTLS
-    family: 4, // Force IPv4 connection
-    lookup: (hostname, options, callback) => {
-      dns.lookup(hostname, { family: 4 }, callback);
-    },
-    auth: {
-      user: smtpUser,
-      pass: smtpPass,
-    },
-  });
+  const resend = new Resend(resendApiKey);
 
   const count = jobs.length;
   const subject = `[Urgent Alert] ${count} High-Priority Job${count !== 1 ? 's' : ''} Pending for ${clientName}`;
@@ -161,17 +138,17 @@ export async function sendClientSummaryEmail({ clientName, jobs }) {
     <div style="font-family: Arial, sans-serif; max-width: 650px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #f8fafc;">
       <h2 style="color: #d97706; margin-top: 0; font-size: 20px;">⚠️ High-Priority Jobs Alert</h2>
       <p style="font-size: 15px; color: #334155; line-height: 1.5; margin-bottom: 15px;">
-        There are <strong>${count}</strong> pending high-priority (XL/XXL) jobs for <strong>${clientName}</strong> due in 2 days or less.
+        There are <strong>${count}</strong> pending high-priority (XL/XXL) jobs for <strong>${clientName}</strong> that are due today or overdue.
       </p>
       <div style="overflow-x: auto; margin-top: 15px;">
         <table style="width: 100%; border-collapse: collapse; font-size: 13px; background: white; border: 1px solid #e2e8f0; border-radius: 8px;">
           <thead>
             <tr style="background-color: #f1f5f9; text-align: left;">
-              ${isPanasonicCheck ? '' : '<th style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600;">Job ID</th>'}
-              <th style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600;">Deliverable</th>
-              <th style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; text-align: center;">Priority</th>
-              <th style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600;">Due Date</th>
-              <th style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600;">Time Left</th>
+              ${isPanasonicCheck ? '' : `<th style="padding: 10px; color: #64748b; font-weight: 600; border-bottom: 2px solid #e2e8f0;">Job ID</th>`}
+              <th style="padding: 10px; color: #64748b; font-weight: 600; border-bottom: 2px solid #e2e8f0;">Deliverable</th>
+              <th style="padding: 10px; color: #64748b; font-weight: 600; border-bottom: 2px solid #e2e8f0;">Priority</th>
+              <th style="padding: 10px; color: #64748b; font-weight: 600; border-bottom: 2px solid #e2e8f0;">Due Date</th>
+              <th style="padding: 10px; color: #64748b; font-weight: 600; border-bottom: 2px solid #e2e8f0;">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -187,13 +164,17 @@ export async function sendClientSummaryEmail({ clientName, jobs }) {
   `;
 
   try {
-    const info = await transporter.sendMail({
-      from: smtpFrom,
+    const { error } = await resend.emails.send({
+      from: fromEmail,
       to: managementEmail,
       subject,
       html,
     });
-    console.log(`[emailService] Summary email sent for ${clientName} (${count} jobs) to ${managementEmail}. Message ID: ${info.messageId}`);
+    if (error) {
+      console.error(`[emailService] Resend API error for ${clientName}:`, error.message);
+      return false;
+    }
+    console.log(`[emailService] Summary email sent for ${clientName} to ${managementEmail}.`);
     return true;
   } catch (err) {
     console.error(`[emailService] Failed to send summary email for ${clientName}:`, err.message);
