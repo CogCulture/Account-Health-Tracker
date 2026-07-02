@@ -207,13 +207,32 @@ app.delete('/api/teams/:id', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/trigger-alerts
+ * Manually triggers the scheduled daily alert check via HTTP request.
+ * Useful for calling from external free cron job pinger (e.g. cron-job.org).
+ */
+app.get('/api/trigger-alerts', async (req, res) => {
+  console.log('[api] Manual alert check triggered via HTTP endpoint...');
+  try {
+    await runScheduledAlertCheck(sheets);
+    res.json({ success: true, message: 'Alert check completed successfully.' });
+  } catch (err) {
+    console.error('[api] Manual alert check failed:', err.message);
+    res.status(500).json({ error: 'Alert check failed', details: err.message });
+  }
+});
+
 // ── Background Cron Scheduler ──────────────────────────────────────────────
-// Scheduled alerts check at 10:10 AM every day
+// Scheduled alerts check at 10:10 AM every day (IST Timezone)
 cron.schedule('10 10 * * *', () => {
   console.log('[cron] Running scheduled daily 10:10 AM alert check...');
   runScheduledAlertCheck(sheets).catch(err => {
     console.error('[cron] Scheduled alert check failed:', err.message);
   });
+}, {
+  scheduled: true,
+  timezone: "Asia/Kolkata"
 });
 
 // ── Start ────────────────────────────────────────────────────────────────────

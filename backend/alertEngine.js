@@ -115,8 +115,8 @@ export async function runScheduledAlertCheck(sheets) {
             const diffTime = timelineMidnight.getTime() - todayMidnight.getTime();
             const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-            // Alert trigger: 2 days or less remaining (including overdue)
-            if (daysRemaining <= 2) {
+            // Alert trigger: today or already passed (due date is today or has already passed)
+            if (daysRemaining <= 0) {
               const alertKey = `${team.id}::${clientName}::${job.jobId}`;
               if (!sentAlerts.has(alertKey)) {
                 const dueDateStr = job.clientTimeline.toISOString().split('T')[0];
