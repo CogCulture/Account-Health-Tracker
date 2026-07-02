@@ -331,11 +331,23 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
 
   const p4Score = Math.max(0, Math.min(10, rawProactiveScore));
 
-  // --- ESCALATION COUNT ---
+  // --- ESCALATION COUNT & DEDUCTIONS ---
   const escalationCount = filteredJobs.filter(row => {
     const val = (row.escalation || '').toString().trim().toLowerCase();
     return val && val !== '' && val !== 'no' && val !== 'n' && val !== 'na' && val !== 'false' && val !== '0' && val !== 'none' && val !== 'n/a' && val !== '-';
   }).length;
+
+  const totalJobsCount = filteredJobs.length;
+  const escalationPercentage = totalJobsCount > 0 ? (escalationCount / totalJobsCount) * 100 : 0;
+  
+  let escalationDeduction = 0;
+  if (escalationPercentage > 0) {
+    if (escalationPercentage <= 40) {
+      escalationDeduction = Math.ceil(escalationPercentage / 5) * 2.5;
+    } else {
+      escalationDeduction = 30;
+    }
+  }
 
   // --- TOTAL HEALTH SCORE ---
   const totalScore = p1Score + p2Score + p3Score + p4Score;
@@ -345,7 +357,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   // Cross Functional (p3)  - 25% weightage
   // Proactiveness (p4)     - 10% weightage
   const weightedPercentage = (p1Score * 2.5) + (p2Score * 4.0) + (p3Score * 2.5) + (p4Score * 1.0);
-  const totalPercentage = Math.round(weightedPercentage);
+  const totalPercentage = Math.max(0, Math.round(weightedPercentage - escalationDeduction));
 
   // Rating and Color configurations based on percentage
   let rating = 'Critical';
@@ -425,7 +437,9 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
       p3: p3Score,
       p4: p4Score,
       total: totalScore,
-      percentage: totalPercentage
+      percentage: totalPercentage,
+      escalationPercentage,
+      escalationDeduction
     },
     metrics: {
       p1: { inPersonCalls, attendanceRate, totalWorkingDays },

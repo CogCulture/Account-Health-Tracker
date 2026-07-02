@@ -459,7 +459,6 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
             if (j.onTime === true) priMap[p].onTime++;
           });
           const sorted = ['XXL', 'XL'].filter(p => priMap[p]);
-          if (sorted.length === 0) return null;
           return (
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
               {sorted.map(p => {
@@ -480,6 +479,38 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
                   </div>
                 );
               })}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (escalationCount > 0) setShowEscalationsModal(true);
+                }}
+                disabled={escalationCount === 0}
+                style={{
+                  flex: 1,
+                  padding: '0.45rem 0.75rem',
+                  borderRadius: 8,
+                  background: 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${escalationCount > 0 ? 'rgba(239,68,68,0.3)' : 'var(--card-border)'}`,
+                  textAlign: 'center',
+                  cursor: escalationCount > 0 ? 'pointer' : 'default',
+                  transition: 'all 0.2s ease',
+                  outline: 'none',
+                  color: 'inherit',
+                  fontFamily: 'inherit',
+                }}
+                onMouseEnter={e => { if (escalationCount > 0) { e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; } }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+              >
+                <div style={{
+                  fontSize: '1.1rem',
+                  fontWeight: 700,
+                  color: escalationCount > 0 ? '#EF4444' : 'var(--text-primary)',
+                  lineHeight: 1
+                }}>{escalationCount}</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                  Escalation{escalationCount !== 1 ? 's' : ''}
+                </div>
+              </button>
             </div>
           );
         })()}
@@ -573,13 +604,6 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
             <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>{clientName}</h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Relationship assessment for {monthName} {year}</p>
-              <button
-                onClick={() => { if (escalationCount > 0) setShowEscalationsModal(true); }}
-                disabled={escalationCount === 0}
-                className={`escalation-badge-btn ${escalationCount > 0 ? 'has-escalations' : 'no-escalations'}`}
-              >
-                {escalationCount} Escalation{escalationCount !== 1 ? 's' : ''}
-              </button>
             </div>
           </div>
         </div>
@@ -620,6 +644,14 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
               <span className={`gauge-score-value ${getTextColorClass()}`}>{percentage}%</span>
               <span className="gauge-score-max">HEALTH SCORE</span>
             </div>
+            {scores.escalationDeduction > 0 && (
+              <span 
+                className="deduction-badge"
+                data-tooltip={`${scores.escalationDeduction}% deducted because of ${Math.round(scores.escalationPercentage)}% escalation`}
+              >
+                -{scores.escalationDeduction}%
+              </span>
+            )}
           </div>
           <div className={`health-badge ${getBadgeClass()}`}>
             <span style={{ fontSize: '1.15rem' }}>{ratingBand}</span>

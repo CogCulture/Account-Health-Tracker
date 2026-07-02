@@ -415,6 +415,8 @@ a:hover {
 }
 
 .radial-score-container {
+  position: relative;
+  z-index: 10;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1357,6 +1359,51 @@ a:hover {
   border: 1px solid rgba(16, 185, 129, 0.2);
   color: #10B981;
   cursor: default;
+}
+
+/* Deduction badge instant custom tooltip */
+.deduction-badge {
+  position: absolute;
+  top: 14px;
+  right: -14px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--color-critical);
+  background: var(--glow-critical);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  padding: 3px 7px;
+  border-radius: 10px;
+  line-height: 1;
+  z-index: 2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.deduction-badge::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 130%;
+  left: 50%;
+  transform: translateX(-50%) scale(0.9);
+  background: #1e293b;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 10px 20px -3px rgba(0, 0, 0, 0.3);
+  z-index: 999;
+}
+
+.deduction-badge:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
 }
 
 

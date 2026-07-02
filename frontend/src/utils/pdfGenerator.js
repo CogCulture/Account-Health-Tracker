@@ -77,10 +77,7 @@ export function generateHealthReportPDF(data) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(28);
   doc.setTextColor(statusColor[0], statusColor[1], statusColor[2]);
-  doc.text(`${scores.total}`, pageWidth - 70, 26);
-  doc.setFontSize(12);
-  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-  doc.text('/ 40', pageWidth - 70 + (scores.total.toString().length * 6) + 2, 26);
+  doc.text(`${scores.percentage}%`, pageWidth - 70, 26);
 
   // Status Badge inside PDF
   doc.setFillColor(statusColor[0], statusColor[1], statusColor[2]);
@@ -136,7 +133,7 @@ export function generateHealthReportPDF(data) {
     {
       name: '4. Proactiveness',
       summary: `Approved: ${metrics.p4.proactiveDetails.paidApproved + metrics.p4.proactiveDetails.initPaidApproved} tasks | Unapproved: ${metrics.p4.proactiveDetails.paidUnapproved + metrics.p4.proactiveDetails.initPaidUnapproved} tasks`,
-      score: `${scores.p4} / 15`
+      score: `${scores.p4} / 10`
     }
   ];
 
@@ -163,8 +160,22 @@ export function generateHealthReportPDF(data) {
     doc.text(row.score, pageWidth - 35, y + 7.5);
   });
 
+  // --- ESCALATION PENALTY WARNING ---
+  let penaltyOffset = 0;
+  if (scores.escalationDeduction > 0) {
+    penaltyOffset = 15;
+    const penaltyY = tableTop + 8 + (4 * rowHeight) + 4;
+    doc.setFillColor(254, 242, 242); // light red background
+    doc.setDrawColor(248, 113, 113); // red border
+    doc.rect(10, penaltyY, pageWidth - 20, 10, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(220, 38, 38); // red text
+    doc.text(`WARNING: -${scores.escalationDeduction}% Escalation Penalty applied due to ${Math.round(scores.escalationPercentage)}% tasks escalated.`, 14, penaltyY + 6.5);
+  }
+
   // --- INSIGHTS & STRATEGIC RECOMMENDATIONS ---
-  const insightsStart = tableTop + 8 + (4 * rowHeight) + 12;
+  const insightsStart = tableTop + 8 + (4 * rowHeight) + 12 + penaltyOffset;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
