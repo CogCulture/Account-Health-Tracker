@@ -72,10 +72,12 @@ export async function sendAlertEmail({ clientName, jobId, deliverable, priority,
     </div>
   `;
 
+  const toAddresses = (managementEmail || '').split(',').map(e => e.trim()).filter(Boolean);
+
   try {
     const { error } = await resend.emails.send({
       from: fromEmail,
-      to: managementEmail,
+      to: toAddresses,
       subject,
       html,
     });
@@ -163,10 +165,12 @@ export async function sendClientSummaryEmail({ clientName, jobs }) {
     </div>
   `;
 
+  const toAddresses = (managementEmail || '').split(',').map(e => e.trim()).filter(Boolean);
+
   try {
     const { error } = await resend.emails.send({
       from: fromEmail,
-      to: managementEmail,
+      to: toAddresses,
       subject,
       html,
     });
