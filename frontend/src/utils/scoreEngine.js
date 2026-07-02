@@ -94,6 +94,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
                             lowerName.startsWith('kalvinator');
 
   const isBharti = lowerName.startsWith('bharti');
+  const isDigitalConnexion = lowerName.startsWith('digital connexion');
   
   if (isNoInPersonBrand) {
     inPersonPoints = 0;
@@ -120,11 +121,15 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   let attendancePoints = 0;
   
   if (isNoInPersonBrand) {
-    if (attendanceRate >= 90)      attendancePoints = 10;
-    else if (attendanceRate >= 75) attendancePoints = 8;
-    else if (attendanceRate >= 60) attendancePoints = 6;
-    else if (attendanceRate >= 50) attendancePoints = 4;
-    else                           attendancePoints = 0;
+    if (isDigitalConnexion) {
+      attendancePoints = Math.round(attendanceRate) / 10;
+    } else {
+      if (attendanceRate >= 90)      attendancePoints = 10;
+      else if (attendanceRate >= 75) attendancePoints = 8;
+      else if (attendanceRate >= 60) attendancePoints = 6;
+      else if (attendanceRate >= 50) attendancePoints = 4;
+      else                           attendancePoints = 0;
+    }
   } else {
     if (attendanceRate >= 90)      attendancePoints = 5;
     else if (attendanceRate >= 75) attendancePoints = 4;
