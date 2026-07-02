@@ -534,7 +534,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
                     <table className="premium-jobs-table">
                       <thead>
                         <tr>
-                          <th>Job ID</th>
+                          {!((clientName || '').toLowerCase().includes('panasonic')) && <th>Job ID</th>}
                           <th>Deliverable</th>
                           <th>Priority</th>
                           <th>Due Date</th>
@@ -543,7 +543,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
                       <tbody>
                         {pendingLargeJobs.map(job => (
                           <tr key={job.jobId}>
-                            <td className="job-id-cell">{job.jobId}</td>
+                            {!((clientName || '').toLowerCase().includes('panasonic')) && <td className="job-id-cell">{job.jobId}</td>}
                             <td className="deliverable-cell">{job.deliverable}</td>
                             <td>
                               <span className={`priority-badge-${job.priority.toLowerCase()} size-badge`}>

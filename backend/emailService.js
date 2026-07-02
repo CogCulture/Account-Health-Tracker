@@ -11,7 +11,8 @@ import nodemailer from 'nodemailer';
  * @param {number} params.daysRemaining
  * @returns {Promise<boolean>}
  */
-export async function sendAlertEmail({ clientName, jobId, deliverable, priority, dueDate, daysRemaining }) {
+export async function sendAlertEmail({ clientName, jobId, deliverable, priority, dueDate, daysRemaining, isPanasonic }) {
+  const isPanasonicCheck = isPanasonic || (clientName || '').toLowerCase().includes('panasonic');
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
   const smtpFrom = process.env.SMTP_FROM || `"Account Health Alerts" <${smtpUser}>`;
@@ -50,10 +51,12 @@ export async function sendAlertEmail({ clientName, jobId, deliverable, priority,
           <td style="padding: 8px 0; color: #64748b; font-weight: bold; width: 140px; border-bottom: 1px solid #f1f5f9;">Client:</td>
           <td style="padding: 8px 0; color: #0f172a; font-weight: 500; border-bottom: 1px solid #f1f5f9;">${clientName}</td>
         </tr>
+        ${isPanasonicCheck ? '' : `
         <tr>
           <td style="padding: 8px 0; color: #64748b; font-weight: bold; border-bottom: 1px solid #f1f5f9;">Job ID:</td>
           <td style="padding: 8px 0; color: #0f172a; font-family: monospace; font-size: 13px; border-bottom: 1px solid #f1f5f9;">${jobId}</td>
         </tr>
+        `}
         <tr>
           <td style="padding: 8px 0; color: #64748b; font-weight: bold; border-bottom: 1px solid #f1f5f9;">Deliverable:</td>
           <td style="padding: 8px 0; color: #0f172a; font-weight: 500; border-bottom: 1px solid #f1f5f9;">${deliverable}</td>
@@ -127,10 +130,11 @@ export async function sendClientSummaryEmail({ clientName, jobs }) {
 
   const count = jobs.length;
   const subject = `[Urgent Alert] ${count} High-Priority Job${count !== 1 ? 's' : ''} Pending for ${clientName}`;
+  const isPanasonicCheck = (clientName || '').toLowerCase().includes('panasonic') || jobs.some(j => j.isPanasonic);
 
   const jobsRowsHtml = jobs.map(job => `
     <tr>
-      <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-family: monospace; font-size: 13px; color: #475569;">${job.jobId}</td>
+      ${isPanasonicCheck ? '' : `<td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-family: monospace; font-size: 13px; color: #475569;">${job.jobId}</td>`}
       <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-weight: 500; color: #0f172a;">${job.deliverable}</td>
       <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: center;">
         <span style="background-color: ${job.priority === 'XXL' ? '#0d9488' : '#d97706'}; color: white; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;">
@@ -154,7 +158,7 @@ export async function sendClientSummaryEmail({ clientName, jobs }) {
         <table style="width: 100%; border-collapse: collapse; font-size: 13px; background: white; border: 1px solid #e2e8f0; border-radius: 8px;">
           <thead>
             <tr style="background-color: #f1f5f9; text-align: left;">
-              <th style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600;">Job ID</th>
+              ${isPanasonicCheck ? '' : '<th style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600;">Job ID</th>'}
               <th style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600;">Deliverable</th>
               <th style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; text-align: center;">Priority</th>
               <th style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600;">Due Date</th>

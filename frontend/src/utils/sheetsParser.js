@@ -245,16 +245,19 @@ export function parseDailyTrackerRows(rows, clientName) {
  * @param {string} clientName - The tab name (sheet) to parse
  * @returns {object[]}        - Array of job row records
  */
-export function parseJobTrackerRows(rows, clientName) {
+export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
   if (!rows || rows.length === 0) {
     throw new Error(`Job Tracker tab "${clientName}" is empty.`);
   }
 
-  // 1. Locate header row (must contain "job id")
-  const hIdx = findHeaderRow(rows, 'job id');
+  const isPanasonicCheck = isPanasonic || (clientName || '').toLowerCase().includes('panasonic');
+  const needle = isPanasonicCheck ? 'deliverable' : 'job id';
+
+  // 1. Locate header row
+  const hIdx = findHeaderRow(rows, needle);
   if (hIdx === -1) {
     throw new Error(
-      `Job Tracker format invalid. Could not find column headers (missing "JOB ID") in tab "${clientName}".`
+      `Job Tracker format invalid. Could not find column headers (missing "${needle.toUpperCase()}") in tab "${clientName}".`
     );
   }
 
@@ -269,23 +272,34 @@ export function parseJobTrackerRows(rows, clientName) {
   headers.forEach((h, idx) => {
     const txt = (h || '').toString().toLowerCase().trim();
     if (txt === 'job id' || txt === 'job_id') colMap.jobId = idx;
-    if (txt === 'deliverable')                colMap.deliverable = idx;
+    // 'deliverables' (plural) is Panasonic's column name
+    if (txt === 'deliverable' || (isPanasonicCheck && txt === 'deliverables')) colMap.deliverable = idx;
     if (txt === 'job type')                   colMap.jobType = idx;
     if (txt === 'status')                     colMap.status = idx;
     if (txt === 'brief date')                 colMap.briefDate = idx;
-    if (txt === 'client timeline' || txt === 'client_timeline') colMap.clientTimeline = idx;
+    // Panasonic uses 'External Timeline' for the client-facing deadline
+    if (txt === 'client timeline' || txt === 'client_timeline' || (isPanasonicCheck && txt === 'external timeline')) colMap.clientTimeline = idx;
     if (txt.includes('delivery date') || txt === 'delivery_date') colMap.deliveryDate = idx;
     if (txt.includes('job closing date') || txt === 'closing_date') colMap.closingDate = idx;
     if (txt === 'timeline status')            colMap.timelineStatus = idx;
-    if (txt === 'priority')                   colMap.priority = idx;
+    // 'prority' (sic) is Panasonic's misspelled column name
+    if (txt === 'priority' || (isPanasonicCheck && txt === 'prority')) colMap.priority = idx;
     if (txt === 'escalation' || txt === 'escalations' || txt === 'escalated') colMap.escalation = idx;
   });
 
   const records = [];
   for (let i = hIdx + 1; i < rows.length; i++) {
     const row = rows[i] || [];
-    const jobId = row[colMap.jobId !== -1 ? colMap.jobId : 0];
-    if (!jobId) continue;
+    
+    let jobId = '';
+    if (isPanasonicCheck) {
+      const deliverable = colMap.deliverable !== -1 ? row[colMap.deliverable] : '';
+      if (!deliverable) continue;
+      jobId = `panasonic-job-${i}`;
+    } else {
+      jobId = row[colMap.jobId !== -1 ? colMap.jobId : 0];
+      if (!jobId) continue;
+    }
 
     records.push({
       jobId,

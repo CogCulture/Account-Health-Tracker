@@ -89,8 +89,10 @@ export async function runScheduledAlertCheck(sheets) {
 
       for (const clientName of commonClients) {
         try {
+          const isPanasonic = (team.name || '').toLowerCase().includes('panasonic') ||
+                              (clientName || '').toLowerCase().includes('panasonic');
           const rawJobs = await getSheetData(sheets, team.jobId, clientName);
-          const jobs = parseJobTrackerRows(rawJobs, clientName);
+          const jobs = parseJobTrackerRows(rawJobs, clientName, isPanasonic);
           const matchingClientJobs = [];
 
           for (const job of jobs) {
@@ -124,7 +126,8 @@ export async function runScheduledAlertCheck(sheets) {
                   priority,
                   dueDate: dueDateStr,
                   daysRemaining,
-                  alertKey
+                  alertKey,
+                  isPanasonic
                 });
               }
             }

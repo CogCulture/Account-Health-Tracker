@@ -289,7 +289,7 @@ export function parseDailyTrackerRows(workbook, clientName) {
 /**
  * Parses and extracts job tracker rows for a specific client worksheet
  */
-export function parseJobTrackerRows(workbook, clientName) {
+export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
   // Find worksheet matching client name (case insensitive)
   const targetSheetName = workbook.SheetNames.find(name => 
     name.toLowerCase().trim() === clientName.toLowerCase().trim()
@@ -302,18 +302,21 @@ export function parseJobTrackerRows(workbook, clientName) {
   const sheet = workbook.Sheets[targetSheetName];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
+  const isPanasonicCheck = isPanasonic || (clientName || '').toLowerCase().includes('panasonic');
+  const needle = isPanasonicCheck ? 'deliverable' : 'job id';
+
   // 1. Locate header row
   let hIdx = -1;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    if (row && row.some(cell => cell.toString().toLowerCase().trim() === 'job id')) {
+    if (row && row.some(cell => cell.toString().toLowerCase().trim() === needle)) {
       hIdx = i;
       break;
     }
   }
 
   if (hIdx === -1) {
-    throw new Error(`Job Tracker format invalid. Could not find column headers (missing "JOB ID") in sheet "${targetSheetName}".`);
+    throw new Error(`Job Tracker format invalid. Could not find column headers (missing "${needle.toUpperCase()}") in sheet "${targetSheetName}".`);
   }
 
   const headers = rows[hIdx];
@@ -335,25 +338,37 @@ export function parseJobTrackerRows(workbook, clientName) {
   headers.forEach((h, idx) => {
     const txt = h.toString().toLowerCase().trim();
     if (txt === 'job id' || txt === 'job_id') colMap.jobId = idx;
-    if (txt === 'deliverable') colMap.deliverable = idx;
+    // 'deliverables' (plural) is Panasonic's column name
+    if (txt === 'deliverable' || (isPanasonicCheck && txt === 'deliverables')) colMap.deliverable = idx;
     if (txt === 'job type') colMap.jobType = idx;
     if (txt === 'status') colMap.status = idx;
     if (txt === 'brief date') colMap.briefDate = idx;
-    if (txt === 'client timeline' || txt === 'client_timeline') colMap.clientTimeline = idx;
+    // Panasonic uses 'External Timeline' for the client-facing deadline
+    if (txt === 'client timeline' || txt === 'client_timeline' || (isPanasonicCheck && txt === 'external timeline')) colMap.clientTimeline = idx;
     if (txt.includes('delivery date') || txt === 'delivery_date') colMap.deliveryDate = idx;
     if (txt.includes('job closing date') || txt === 'closing_date') colMap.closingDate = idx;
     if (txt === 'timeline status') colMap.timelineStatus = idx;
-    if (txt === 'priority') colMap.priority = idx;
+    // 'prority' (sic) is Panasonic's misspelled column name
+    if (txt === 'priority' || (isPanasonicCheck && txt === 'prority')) colMap.priority = idx;
   });
 
   const records = [];
   for (let i = hIdx + 1; i < rows.length; i++) {
     const row = rows[i];
-    if (!row || row.length === 0 || !row[colMap.jobId !== -1 ? colMap.jobId : 0]) {
+    if (!row || row.length === 0) {
       continue; // Skip empty rows
     }
 
-    const jobId = row[colMap.jobId !== -1 ? colMap.jobId : 0];
+    let jobId = '';
+    if (isPanasonicCheck) {
+      const deliverable = colMap.deliverable !== -1 ? row[colMap.deliverable] : '';
+      if (!deliverable) continue;
+      jobId = `panasonic-job-${i}`;
+    } else {
+      if (!row[colMap.jobId !== -1 ? colMap.jobId : 0]) continue;
+      jobId = row[colMap.jobId !== -1 ? colMap.jobId : 0];
+    }
+
     const deliverable = colMap.deliverable !== -1 ? row[colMap.deliverable] : '';
     const jobType = colMap.jobType !== -1 ? row[colMap.jobType] : '';
     const status = colMap.status !== -1 ? row[colMap.status] : '';

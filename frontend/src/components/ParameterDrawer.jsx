@@ -159,7 +159,7 @@ function P2Detail({ metrics }) {
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
                   <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--text-primary)', flex: 1 }}>
-                    {job.deliverable || job.id}
+                    {job.deliverable || (job.id && !job.id.startsWith('panasonic-') ? job.id : '—')}
                   </span>
                   {job.onTime === true && <CheckCircle2 size={16} style={{ color: '#10B981', flexShrink: 0 }} />}
                   {job.onTime === false && <XCircle size={16} style={{ color: '#EF4444', flexShrink: 0 }} />}

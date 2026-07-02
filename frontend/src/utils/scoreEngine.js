@@ -42,14 +42,19 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   }
 
   // --- 2. FILTER JOB TRACKER ROWS BY SELECTED MONTH/YEAR ---
+  const isPanasonicClient = (clientName || '').toLowerCase().includes('panasonic');
   const filteredJobs = jobRows.filter(row => {
     // Determine the relevant date for filtering
     let dateToUse = null;
     
     if (row.status?.toLowerCase().trim() === 'closed' || row.status?.toLowerCase().trim() === 'completed') {
       dateToUse = row.closingDate || row.deliveryDate || row.briefDate;
+      // For Panasonic: fall back to clientTimeline if all other dates are missing
+      if (!dateToUse && isPanasonicClient) dateToUse = row.clientTimeline;
     } else {
       dateToUse = row.briefDate;
+      // For Panasonic: fall back to clientTimeline if briefDate is missing
+      if (!dateToUse && isPanasonicClient) dateToUse = row.clientTimeline;
     }
     
     if (!dateToUse) return false;
@@ -152,7 +157,15 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   const p2JobDetails = closedJobs.map(row => {
     const deadline   = row.clientTimeline;
     const actualDate = row.deliveryDate || row.closingDate;
-    const onTime     = deadline && actualDate ? actualDate.getTime() <= deadline.getTime() : null;
+    let onTime;
+    if (deadline && actualDate) {
+      onTime = actualDate.getTime() <= deadline.getTime();
+    } else if (isPanasonicClient && !actualDate) {
+      // Panasonic sheets lack delivery/closing date columns; if a job is closed it's considered on-time
+      onTime = true;
+    } else {
+      onTime = null;
+    }
     const fmtDate    = d => d ? d.toISOString().split('T')[0] : null;
     return {
       id:          row.jobId,

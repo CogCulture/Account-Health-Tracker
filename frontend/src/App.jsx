@@ -135,8 +135,13 @@ export default function App() {
         fetchSheetData(jobId, tabName),
       ]);
 
+      const pair = activePairs.find(p => p.id === clientEntry.pairId);
+      const isPanasonic = (tabName || '').toLowerCase().includes('panasonic') ||
+                          (label || '').toLowerCase().includes('panasonic') ||
+                          (pair && pair.name || '').toLowerCase().includes('panasonic');
+
       const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
-      const jobRows   = parseJobTrackerRows(jobRaw, tabName);
+      const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
       const result    = calculateHealthScore(dailyRows, jobRows, label, month, year);
 
       setScoreData(result);
@@ -153,7 +158,7 @@ export default function App() {
       setErrorMsg(err.message);
       setIsErrorOpen(true);
     }
-  }, [month, year, clients, clientFullData]);
+  }, [month, year, clients, clientFullData, activePairs]);
 
   const handleReload = useCallback(async () => {
     setCalcStatus('loading');
@@ -167,8 +172,12 @@ export default function App() {
             fetchSheetData(dailyId, tabName),
             fetchSheetData(jobId, tabName),
           ]);
+          const pair = activePairs.find(p => p.id === clientEntry.pairId);
+          const isPanasonic = (tabName || '').toLowerCase().includes('panasonic') ||
+                              (label || '').toLowerCase().includes('panasonic') ||
+                              (pair && pair.name || '').toLowerCase().includes('panasonic');
           const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
-          const jobRows   = parseJobTrackerRows(jobRaw, tabName);
+          const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
           const result    = calculateHealthScore(dailyRows, jobRows, label, month, year);
           setScoreData(result);
           setCalcStatus('idle');
@@ -186,7 +195,7 @@ export default function App() {
       setCalcStatus('idle');
     }
     await clientsPromise;
-  }, [selectedClient, clients, loadClients, month, year]);
+  }, [selectedClient, clients, loadClients, month, year, activePairs]);
 
   // ── Batch-load all clients for Overview Dashboard ────────────────────────
   const batchLoadAllClients = useCallback(async (clientList, onClientDone) => {
@@ -208,8 +217,12 @@ export default function App() {
             fetchSheetData(dailyId, tabName),
             fetchSheetData(jobId, tabName),
           ]);
+          const pair = activePairs.find(p => p.id === clientEntry.pairId);
+          const isPanasonic = (tabName || '').toLowerCase().includes('panasonic') ||
+                              (label || '').toLowerCase().includes('panasonic') ||
+                              (pair && pair.name || '').toLowerCase().includes('panasonic');
           const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
-          const jobRows   = parseJobTrackerRows(jobRaw, tabName);
+          const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
           const result    = calculateHealthScore(dailyRows, jobRows, label, month, year);
           setClientScores(prev => ({ ...prev, [cacheKey]: { percentage: result.scores.percentage, rating: result.rating } }));
           setClientFullData(prev => ({ ...prev, [cacheKey]: result }));
@@ -225,7 +238,7 @@ export default function App() {
         await sleep(DELAY_MS);
       }
     }
-  }, [month, year]);
+  }, [month, year, activePairs]);
 
   // Re-calculate when month/year changes if a client is already selected
   const handleMonthChange = (m) => {
