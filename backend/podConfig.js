@@ -6,7 +6,7 @@
  * the digest for that team's clients.
  */
 
-export const ALLOWED_TEAM_NAMES = ['POD1', 'POD2', 'POD3', 'B2B'];
+export const ALLOWED_TEAM_NAMES = ['POD1', 'POD2', 'PANASONIC', 'B2B'];
 
 // Always CC'd on every pod digest email.
 const ALWAYS_CC = ['vaibhav@cogculture.agency', 'ashok@cogculture.agency'];
@@ -20,7 +20,7 @@ export const POD_RECIPIENTS = {
     to: ['vishal@cogculture.agency', 'deepakshi@cogculture.agency'],
     cc: ALWAYS_CC,
   },
-  POD3: {
+  PANASONIC: {
     to: ['vishakh@cogculture.agency', 'deepakshi@cogculture.agency'],
     cc: ALWAYS_CC,
   },

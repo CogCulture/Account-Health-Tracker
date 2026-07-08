@@ -5,7 +5,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
 // Team name is now used to route the daily digest email to the right POD's
 // recipients (see backend/podConfig.js), so it must be one of these values.
-const TEAM_NAMES = ['POD1', 'POD2', 'POD3', 'B2B'];
+const TEAM_NAMES = ['POD1', 'POD2', 'PANASONIC', 'B2B'];
 
 function extractSheetId(input) {
   const trimmed = (input || '').trim();
