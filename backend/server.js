@@ -1,18 +1,46 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
 import { google } from 'googleapis';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import cron from 'node-cron';
-import { runScheduledAlertCheck } from './alertEngine.js';
+import { runDailyDigestCheck } from './dailyDigestEngine.js';
 import { getTeamsCollection } from './db.js';
+import { ALLOWED_TEAM_NAMES } from './podConfig.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// ── Security Headers (Helmet) ────────────────────────────────────────────────
+app.use(helmet());
+
+// ── Rate Limiting ────────────────────────────────────────────────────────────
+// Generous general rate limiting
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 1000, // Limit each IP to 1000 requests per 15 minutes
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many requests from this IP, please try again later.' },
+});
+
+// Stricter rate limit for triggering alert checks manually
+const alertTriggerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 60, // Limit each IP to 60 alert trigger requests per hour
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many alert trigger requests from this IP, please try again later.' },
+});
+
+// Apply global rate limiting to all requests
+app.use(generalLimiter);
 
 // ── CORS: allow Vite dev server ──────────────────────────────────────────────
 const allowedOrigins = process.env.CORS_ORIGIN 
@@ -82,14 +110,16 @@ async function getSheetData(spreadsheetId, tabName) {
  */
 app.get('/api/sheets/tabs', async (req, res) => {
   const { sheetId } = req.query;
-  if (!sheetId) return res.status(400).json({ error: 'sheetId query param required' });
+  if (typeof sheetId !== 'string' || !sheetId.trim()) {
+    return res.status(400).json({ error: 'sheetId query param must be a valid non-empty string' });
+  }
 
   try {
     const tabs = await getSheetTabs(sheetId);
     res.json({ tabs });
   } catch (err) {
-    console.error('[server] /api/sheets/tabs error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[server] /api/sheets/tabs error:', err);
+    res.status(500).json({ error: 'Failed to retrieve spreadsheet tabs due to an internal server error' });
   }
 });
 
@@ -99,14 +129,16 @@ app.get('/api/sheets/tabs', async (req, res) => {
  */
 app.get('/api/sheets/data', async (req, res) => {
   const { sheetId, tab } = req.query;
-  if (!sheetId || !tab) return res.status(400).json({ error: 'sheetId and tab query params required' });
+  if (typeof sheetId !== 'string' || !sheetId.trim() || typeof tab !== 'string' || !tab.trim()) {
+    return res.status(400).json({ error: 'sheetId and tab query params must be valid non-empty strings' });
+  }
 
   try {
     const data = await getSheetData(sheetId, tab);
     res.json({ data });
   } catch (err) {
-    console.error('[server] /api/sheets/data error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[server] /api/sheets/data error:', err);
+    res.status(500).json({ error: 'Failed to retrieve spreadsheet data due to an internal server error' });
   }
 });
 
@@ -130,7 +162,7 @@ app.get('/api/teams', async (_req, res) => {
     const teams = await collection.find({}).toArray();
     res.json({ teams });
   } catch (err) {
-    console.error('[server] GET /api/teams error:', err.message);
+    console.error('[server] GET /api/teams error:', err);
     res.status(500).json({ error: 'Failed to retrieve teams' });
   }
 });
@@ -141,8 +173,23 @@ app.get('/api/teams', async (_req, res) => {
  */
 app.post('/api/teams', async (req, res) => {
   const { id, name, dailyId, jobId, active } = req.body;
-  if (!name || !dailyId || !jobId) {
-    return res.status(400).json({ error: 'name, dailyId, and jobId are required' });
+
+  // Strict type checks to prevent MongoDB query/NoSQL injection
+  if (id !== undefined && (typeof id !== 'string' || !id.trim())) {
+    return res.status(400).json({ error: 'id must be a valid non-empty string if provided' });
+  }
+  if (typeof name !== 'string' || !ALLOWED_TEAM_NAMES.includes(name.trim().toUpperCase())) {
+    return res.status(400).json({ error: `name must be one of: ${ALLOWED_TEAM_NAMES.join(', ')}` });
+  }
+  const normalizedName = name.trim().toUpperCase();
+  if (typeof dailyId !== 'string' || !dailyId.trim()) {
+    return res.status(400).json({ error: 'dailyId must be a valid non-empty string' });
+  }
+  if (typeof jobId !== 'string' || !jobId.trim()) {
+    return res.status(400).json({ error: 'jobId must be a valid non-empty string' });
+  }
+  if (active !== undefined && typeof active !== 'boolean') {
+    return res.status(400).json({ error: 'active must be a boolean' });
   }
 
   try {
@@ -153,7 +200,7 @@ app.post('/api/teams', async (req, res) => {
       // Edit existing team in DB
       await collection.updateOne(
         { id },
-        { $set: { name, dailyId, jobId, active: active ?? false } }
+        { $set: { name: normalizedName, dailyId, jobId, active: active ?? false } }
       );
       updatedTeam = await collection.findOne({ id });
     } else {
@@ -162,7 +209,7 @@ app.post('/api/teams', async (req, res) => {
       const isFirst = count === 0;
       updatedTeam = {
         id: Date.now().toString(),
-        name,
+        name: normalizedName,
         dailyId,
         jobId,
         active: active ?? isFirst
@@ -173,7 +220,7 @@ app.post('/api/teams', async (req, res) => {
     const teams = await collection.find({}).toArray();
     res.json({ team: updatedTeam, teams });
   } catch (err) {
-    console.error('[server] POST /api/teams error:', err.message);
+    console.error('[server] POST /api/teams error:', err);
     res.status(500).json({ error: 'Failed to save team' });
   }
 });
@@ -184,6 +231,9 @@ app.post('/api/teams', async (req, res) => {
  */
 app.delete('/api/teams/:id', async (req, res) => {
   const { id } = req.params;
+  if (typeof id !== 'string' || !id.trim()) {
+    return res.status(400).json({ error: 'id parameter must be a valid non-empty string' });
+  }
 
   try {
     const collection = await getTeamsCollection();
@@ -202,38 +252,39 @@ app.delete('/api/teams/:id', async (req, res) => {
 
     res.json({ success: true, teams });
   } catch (err) {
-    console.error('[server] DELETE /api/teams error:', err.message);
+    console.error('[server] DELETE /api/teams error:', err);
     res.status(500).json({ error: 'Failed to delete team' });
   }
 });
 
 /**
- * GET /api/trigger-alerts
- * Manually triggers the scheduled daily alert check via HTTP request.
+ * GET /api/trigger-daily-digest
+ * Manually triggers the 11:30 AM daily pod digest email via HTTP request.
  * Useful for calling from external free cron job pinger (e.g. cron-job.org).
+ * Rate limit applied to protect against spamming API and resources.
  */
-app.get('/api/trigger-alerts', (req, res) => {
-  console.log('[api] Manual alert check triggered via HTTP endpoint (asynchronous)...');
-  
+app.get('/api/trigger-daily-digest', alertTriggerLimiter, (req, res) => {
+  console.log('[api] Manual daily digest triggered via HTTP endpoint (asynchronous)...');
+
   // Trigger check in background (non-blocking) to prevent HTTP timeouts
-  runScheduledAlertCheck(sheets)
+  runDailyDigestCheck(sheets)
     .then(() => {
-      console.log('[api] Background alert check completed successfully.');
+      console.log('[api] Background daily digest completed successfully.');
     })
     .catch(err => {
-      console.error('[api] Background alert check failed:', err.message);
+      console.error('[api] Background daily digest failed:', err);
     });
 
   // Respond immediately to the client
-  res.json({ success: true, message: 'Alert check triggered and running in the background.' });
+  res.json({ success: true, message: 'Daily digest triggered and running in the background.' });
 });
 
 // ── Background Cron Scheduler ──────────────────────────────────────────────
-// Scheduled alerts check at 10:10 AM every day (IST Timezone)
-cron.schedule('10 10 * * *', () => {
-  console.log('[cron] Running scheduled daily 10:10 AM alert check...');
-  runScheduledAlertCheck(sheets).catch(err => {
-    console.error('[cron] Scheduled alert check failed:', err.message);
+// Scheduled daily pod digest (pending L/XL/XXL jobs + meeting attendance %) at 11:30 AM every day (IST Timezone)
+cron.schedule('30 11 * * *', () => {
+  console.log('[cron] Running scheduled daily 11:30 AM digest check...');
+  runDailyDigestCheck(sheets).catch(err => {
+    console.error('[cron] Scheduled daily digest check failed:', err.message);
   });
 }, {
   scheduled: true,

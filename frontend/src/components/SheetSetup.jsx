@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Link2, HeartPulse, Plus, Trash2, Check, Pencil } from 'lucide-react';
+import { Link2, HeartPulse, Plus, Trash2, Check, Pencil, ChevronDown } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+
+// Team name is now used to route the daily digest email to the right POD's
+// recipients (see backend/podConfig.js), so it must be one of these values.
+const TEAM_NAMES = ['POD1', 'POD2', 'POD3', 'B2B'];
 
 function extractSheetId(input) {
   const trimmed = (input || '').trim();
@@ -14,7 +18,7 @@ function extractSheetId(input) {
 // ── Pair form ─────────────────────────────────────────────────────────────────
 
 function PairForm({ initial, onSave, onCancel }) {
-  const [name,     setName]     = useState(initial?.name    || '');
+  const [name,     setName]     = useState(initial?.name    || TEAM_NAMES[0]);
   const [dailyUrl, setDailyUrl] = useState(initial?.dailyId || '');
   const [jobUrl,   setJobUrl]   = useState(initial?.jobId   || '');
   const [error,    setError]    = useState('');
@@ -24,7 +28,7 @@ function PairForm({ initial, onSave, onCancel }) {
     const jobId   = extractSheetId(jobUrl);
     if (!dailyId) { setError('Could not extract a valid ID from the Daily Tracker URL.'); return; }
     if (!jobId)   { setError('Could not extract a valid ID from the Job Tracker URL.'); return; }
-    onSave({ name: name.trim(), dailyId, jobId });
+    onSave({ name, dailyId, jobId });
   };
 
   const iconStyle = { position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' };
@@ -32,9 +36,14 @@ function PairForm({ initial, onSave, onCancel }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
       <div>
-        <label className="form-label" style={{ fontSize: '0.75rem' }}>Team Name</label>
-        <input className="form-control" style={{ fontSize: '0.88rem' }} placeholder="e.g. Team A" value={name}
-          onChange={e => { setName(e.target.value); setError(''); }} />
+        <label className="form-label" style={{ fontSize: '0.75rem' }}>Team Name (POD)</label>
+        <div style={{ position: 'relative' }}>
+          <select className="form-control" style={{ fontSize: '0.88rem', paddingRight: '2.5rem', appearance: 'none' }}
+            value={name} onChange={e => { setName(e.target.value); setError(''); }}>
+            {TEAM_NAMES.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+          </select>
+          <ChevronDown size={16} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-muted)' }} />
+        </div>
       </div>
       <div>
         <label className="form-label" style={{ fontSize: '0.75rem' }}>Daily Tracker URL</label>
