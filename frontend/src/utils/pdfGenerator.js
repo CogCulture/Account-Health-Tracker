@@ -132,7 +132,7 @@ export function generateHealthReportPDF(data) {
     },
     {
       name: '4. Proactiveness',
-      summary: `Approved: ${metrics.p4.proactiveDetails.paidApproved + metrics.p4.proactiveDetails.initPaidApproved} tasks | Unapproved: ${metrics.p4.proactiveDetails.paidUnapproved + metrics.p4.proactiveDetails.initPaidUnapproved} tasks`,
+      summary: `Initiative Approved: ${metrics.p4.proactiveDetails.initPaidApproved} tasks | Initiative Unapproved: ${metrics.p4.proactiveDetails.initPaidUnapproved} tasks`,
       score: `${scores.p4} / 10`
     }
   ];

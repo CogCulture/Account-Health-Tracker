@@ -4,8 +4,28 @@ import { getTeamsCollection } from './db.js';
 import { POD_RECIPIENTS } from './podConfig.js';
 
 // Standalone sheets API helpers (mirrors alertEngine.js)
+async function callWithRetry(fn, retries = 5, delay = 3000) {
+  try {
+    return await fn();
+  } catch (error) {
+    const isRateLimit =
+      error.status === 429 ||
+      error.code === 429 ||
+      (error.message && error.message.toLowerCase().includes('quota')) ||
+      (error.message && error.message.toLowerCase().includes('rate limit')) ||
+      (error.message && error.message.toLowerCase().includes('read requests'));
+
+    if (isRateLimit && retries > 0) {
+      console.warn(`[sheets API] Rate limit / quota reached. Retrying in ${delay}ms... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return callWithRetry(fn, retries - 1, delay * 2); // Exponential backoff
+    }
+    throw error;
+  }
+}
+
 async function getSheetTabs(sheets, spreadsheetId) {
-  const res = await sheets.spreadsheets.get({ spreadsheetId });
+  const res = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId }));
   return res.data.sheets.map(s => s.properties.title);
 }
 
@@ -15,12 +35,12 @@ async function getSheetData(sheets, spreadsheetId, tabName) {
   const matchedTab = actualTabs.find(t => t.toLowerCase().trim() === targetLowerTrimmed) || tabName;
   const safeRange = `'${matchedTab.replace(/'/g, "''")}'`;
 
-  const res = await sheets.spreadsheets.values.get({
+  const res = await callWithRetry(() => sheets.spreadsheets.values.get({
     spreadsheetId,
     range: safeRange,
     valueRenderOption: 'UNFORMATTED_VALUE',
     dateTimeRenderOption: 'SERIAL_NUMBER',
-  });
+  }));
   return res.data.values || [];
 }
 

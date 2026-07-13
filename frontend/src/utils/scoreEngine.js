@@ -313,23 +313,38 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     p4JobDetails.push({ label: label || jobType, category, rawType: row.jobType });
   });
 
-  // Apply count-based scoring
-  // Initiative Paid (Approved) — max 2 pts
-  let initPaidApprovedPts = 0;
-  if (proactiveDetails.initPaidApproved >= 2) initPaidApprovedPts = 2;
-  else if (proactiveDetails.initPaidApproved === 1) initPaidApprovedPts = 1;
+  const totalJobsCount = filteredJobs.length;
 
-  // Paid (Approved) — max 3 pts
-  let paidApprovedPts = 0;
-  if (proactiveDetails.paidApproved >= 3)      paidApprovedPts = 3;
-  else if (proactiveDetails.paidApproved === 2) paidApprovedPts = 2;
-  else if (proactiveDetails.paidApproved === 1) paidApprovedPts = 1;
+  // Apply percentage-based scoring
+  let initUnapprovedPts = 0;
+  let initApprovedPts = 0;
+  let pctUnapproved = 0;
+  let pctApproved = 0;
 
-  // Raw score out of 5, then scale to 10
-  const rawOutOf5 = initPaidApprovedPts + paidApprovedPts;
-  rawProactiveScore = rawOutOf5 * 2; // scale to out of 10
+  if (totalJobsCount > 0) {
+    pctUnapproved = (proactiveDetails.initPaidUnapproved / totalJobsCount) * 100;
+    pctApproved = (proactiveDetails.initPaidApproved / totalJobsCount) * 100;
 
-  const p4Score = Math.max(0, Math.min(10, rawProactiveScore));
+    // Initiative Unapproved Points
+    if (pctUnapproved > 20) initUnapprovedPts = 5;
+    else if (pctUnapproved > 15) initUnapprovedPts = 4;
+    else if (pctUnapproved > 10) initUnapprovedPts = 3;
+    else if (pctUnapproved > 5) initUnapprovedPts = 2;
+    else if (pctUnapproved > 0) initUnapprovedPts = 1;
+
+    // Initiative Approved Points
+    if (pctApproved > 20) initApprovedPts = 10;
+    else if (pctApproved > 15) initApprovedPts = 8;
+    else if (pctApproved > 10) initApprovedPts = 6;
+    else if (pctApproved > 5) initApprovedPts = 4;
+    else if (pctApproved > 0) initApprovedPts = 2;
+  }
+
+  // Combined score out of 15
+  const rawScore = initUnapprovedPts + initApprovedPts;
+  // Scale to 10
+  rawProactiveScore = (rawScore / 15) * 10;
+  const p4Score = Math.max(0, Math.min(10, Math.round(rawProactiveScore * 10) / 10));
 
   // --- ESCALATION COUNT & DEDUCTIONS ---
   const escalationCount = filteredJobs.filter(row => {
@@ -337,7 +352,6 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     return val && val !== '' && val !== 'no' && val !== 'n' && val !== 'na' && val !== 'false' && val !== '0' && val !== 'none' && val !== 'n/a' && val !== '-';
   }).length;
 
-  const totalJobsCount = filteredJobs.length;
   const escalationPercentage = totalJobsCount > 0 ? (escalationCount / totalJobsCount) * 100 : 0;
   
   let escalationDeduction = 0;
@@ -387,14 +401,14 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     p1: generateP1Insight(isNoInPersonBrand, inPersonCalls, attendanceRate, totalWorkingDays),
     p2: generateP2Insight(p2Score, totalClosed, onTimeRate, onTimeJobs),
     p3: generateP3Insight(creativeAttendDays, managementAttendDays, filteredDaily.length),
-    p4: generateP4Insight(p4Score, rawProactiveScore, proactiveDetails)
+    p4: generateP4Insight(p4Score, rawScore, proactiveDetails, totalJobsCount)
   };
 
   const solutions = {
     p1: generateP1Solution(isBharti, isNoInPersonBrand, inPersonCalls, deepakshiInPerson, otherInPerson, attendanceRate),
     p2: generateP2Solution(p2Score, totalClosed),
     p3: generateP3Solution(creativeAttendDays, managementAttendDays),
-    p4: generateP4Solution(p4Score, proactiveDetails),
+    p4: generateP4Solution(p4Score, proactiveDetails, totalJobsCount),
   };
 
   const today = new Date();
@@ -445,7 +459,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
       p1: { inPersonCalls, attendanceRate, totalWorkingDays },
       p2: { totalClosed, onTimeJobs, onTimeRate, jobs: p2JobDetails, priorityWarnings },
       p3: { creativeAttendDays, managementAttendDays, totalWorkingDays: filteredDaily.length },
-      p4: { rawProactiveScore, proactiveDetails, jobs: p4JobDetails }
+      p4: { rawProactiveScore, rawScore, proactiveDetails, pctApproved, pctUnapproved, totalJobsCount, jobs: p4JobDetails }
     },
     escalationCount,
     jobsList: filteredJobs.map(row => ({
@@ -567,34 +581,52 @@ function generateP3Solution(creativeAttendDays, managementAttendDays) {
   return tips;
 }
 
-function generateP4Insight(score, rawScore, details) {
-  const { paidApproved, paidUnapproved, initPaidApproved, initPaidUnapproved, retainer } = details;
-  const totalProactive = paidApproved + paidUnapproved + initPaidApproved + initPaidUnapproved;
-  if (totalProactive === 0) {
-    return 'No paid or initiative tasks were logged this month.';
+function generateP4Insight(score, rawScore, details, totalJobs) {
+  const { initPaidApproved, initPaidUnapproved } = details;
+  const totalInitiatives = initPaidApproved + initPaidUnapproved;
+  if (totalJobs === 0) {
+    return 'No jobs were logged this month.';
   }
+  if (totalInitiatives === 0) {
+    return 'No initiative tasks were logged this month.';
+  }
+  const pctUnapproved = Math.round((initPaidUnapproved / totalJobs) * 100 * 10) / 10;
+  const pctApproved = Math.round((initPaidApproved / totalJobs) * 100 * 10) / 10;
+
   let parts = [];
   if (initPaidApproved > 0) {
-    const pts = initPaidApproved >= 2 ? 2 : 1;
-    parts.push(`${initPaidApproved} Initiative-Paid/Approved (+${pts} pts)`);
+    parts.push(`${initPaidApproved} Initiative Approved (${pctApproved}%)`);
   }
-  if (paidApproved > 0) {
-    const pts = paidApproved >= 3 ? 3 : paidApproved === 2 ? 2 : 1;
-    parts.push(`${paidApproved} Paid (Approved) (+${pts} pts)`);
+  if (initPaidUnapproved > 0) {
+    parts.push(`${initPaidUnapproved} Initiative Unapproved (${pctUnapproved}%)`);
   }
-  if (paidUnapproved > 0) parts.push(`${paidUnapproved} Paid (Not Approved) (0 pts — not scored)`);
-  if (initPaidUnapproved > 0) parts.push(`${initPaidUnapproved} Initiative-Unpaid/Unapproved (0 pts)`);
-  if (retainer > 0) parts.push(`${retainer} Retainer (0 pts)`);
-  return `Logged ${parts.join(', ')}.`;
+  return `Logged ${parts.join(', ')} out of ${totalJobs} total jobs.`;
 }
 
-function generateP4Solution(score, details) {
-  const { paidApproved, initPaidApproved } = details;
+function generateP4Solution(score, details, totalJobs) {
+  const { initPaidApproved, initPaidUnapproved } = details;
   const tips = [];
-  if (initPaidApproved < 2) tips.push(`Log ${2 - initPaidApproved} more Initiative-Paid/Approved project(s) to reach the 2-initiative threshold for full points.`);
-  if (paidApproved < 3) tips.push(`Log ${3 - paidApproved} more Paid (Approved) job(s) to reach the 3-job threshold for full points.`);
-  if (score < 6) tips.push('Present at least one new initiative idea per month and secure written client approval before beginning.');
-  if (score >= 8) tips.push('Strong proactiveness. Keep generating approved initiatives and paid work to sustain top scores.');
-  if (tips.length === 0) tips.push('Continue converting retainer work into initiative-led proposals for maximum score impact.');
+  if (totalJobs === 0) {
+    tips.push('Ensure jobs are logged in the tracker to assess proactiveness.');
+    return tips;
+  }
+  const pctUnapproved = (initPaidUnapproved / totalJobs) * 100;
+  const pctApproved = (initPaidApproved / totalJobs) * 100;
+
+  if (pctApproved <= 20) {
+    tips.push('Increase the percentage of approved initiatives to above 20% of total jobs for full points.');
+  }
+  if (pctUnapproved <= 20) {
+    tips.push('Pitch more proactive initiatives to the client to increase the initiative rate.');
+  }
+  if (score < 6) {
+    tips.push('Present new initiative ideas and secure written client approval to boost approved initiative percentage.');
+  }
+  if (score >= 8) {
+    tips.push('Strong proactiveness with high initiative rate. Keep generating approved initiatives.');
+  }
+  if (tips.length === 0) {
+    tips.push('Continue converting standard retainer work into initiative-led proposals.');
+  }
   return tips;
 }

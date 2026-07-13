@@ -394,8 +394,8 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
       statPills.push({ label: 'Management meetings', value: metrics.p3.managementAttendDays });
     }
     if (id === 'p4') {
-      statPills.push({ label: 'Initiative paid', value: metrics.p4.proactiveDetails.initPaidApproved });
-      statPills.push({ label: 'Paid approved', value: metrics.p4.proactiveDetails.paidApproved });
+      statPills.push({ label: 'Initiative Approved', value: metrics.p4.proactiveDetails.initPaidApproved });
+      statPills.push({ label: 'Initiative Unapproved', value: metrics.p4.proactiveDetails.initPaidUnapproved });
     }
 
     return (
@@ -686,7 +686,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
           <ParamCard id="p1" title="JSR Calling" sub={isNoInPersonBrand ? "Daily JSR call attendance" : "In-person meetings + daily attendance"} score={scores.p1} />
           <ParamCard id="p2" title="Delivery Date" sub="Ratio of on-time closed deliverables" score={scores.p2} />
           <ParamCard id="p3" title="Cross-Functional Meeting" sub="Creative & Management attendances" score={scores.p3} />
-          <ParamCard id="p4" title="Proactiveness" sub="Incremental paid task index" score={scores.p4} />
+          <ParamCard id="p4" title="Proactiveness" sub="Initiative task index" score={scores.p4} />
         </div>
       </div>
 

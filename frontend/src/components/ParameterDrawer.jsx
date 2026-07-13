@@ -245,7 +245,7 @@ const CATEGORY_META = {
 };
 
 function P4Detail({ metrics }) {
-  const { rawProactiveScore, proactiveDetails, jobs = [] } = metrics.p4;
+  const { rawProactiveScore, proactiveDetails, pctApproved = 0, pctUnapproved = 0, totalJobsCount = 0, jobs = [] } = metrics.p4;
 
   const grouped = {};
   for (const job of jobs) {
@@ -258,10 +258,13 @@ function P4Detail({ metrics }) {
   return (
     <>
       <SectionTitle>This month at a glance</SectionTitle>
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+        <StatCard label="Total Jobs" value={totalJobsCount} color="var(--text-color)" />
+        <StatCard label="Initiative Approved" value={`${proactiveDetails.initPaidApproved} (${Math.round(pctApproved)}%)`} color="#10B981" />
+        <StatCard label="Initiative Unapproved" value={`${proactiveDetails.initPaidUnapproved} (${Math.round(pctUnapproved)}%)`} color="#F59E0B" />
+      </div>
       <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-        {proactiveDetails.initPaidApproved > 0 && <StatCard label="Initiative Paid/Appr." value={proactiveDetails.initPaidApproved} color="#10B981" />}
         {proactiveDetails.paidApproved > 0      && <StatCard label="Paid (Approved)" value={proactiveDetails.paidApproved} color="#60a5fa" />}
-        {proactiveDetails.initPaidUnapproved > 0 && <StatCard label="Initiative Unpaid" value={proactiveDetails.initPaidUnapproved} color="#F59E0B" />}
         {proactiveDetails.retainer > 0           && <StatCard label="Retainer" value={proactiveDetails.retainer} color="var(--text-muted)" />}
         {proactiveDetails.paidUnapproved > 0     && <StatCard label="Paid (Not Appr.)" value={proactiveDetails.paidUnapproved} color="#EF4444" />}
         {jobs.length === 0 && <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No jobs found for this period.</p>}
@@ -313,7 +316,7 @@ const PARAMS = {
   p1: { title: 'JSR Calling',              sub: 'In-person meetings + daily attendance',  weight: '25%', color: '#60a5fa' },
   p2: { title: 'Delivery Date',            sub: 'On-time closed deliverable ratio',        weight: '40%', color: '#10B981' },
   p3: { title: 'Cross-Functional Meeting', sub: 'Creative & Management attendance',        weight: '25%', color: '#f59e0b' },
-  p4: { title: 'Proactiveness',            sub: 'Incremental paid task index',             weight: '10%', color: '#a78bfa' },
+  p4: { title: 'Proactiveness',            sub: 'Initiative task index',             weight: '10%', color: '#a78bfa' },
 };
 
 export default function ParameterDrawer({ param, scoreData, onClose }) {
