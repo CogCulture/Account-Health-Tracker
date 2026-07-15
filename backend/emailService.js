@@ -56,9 +56,17 @@ function buildTransportForRecipients(toEmails, ccEmails) {
     console.warn('[emailService] BREVO_API_KEY not set. Skipping email delivery.');
     return null;
   }
-  if (!toEmails || toEmails.length === 0) {
-    console.warn('[emailService] No recipients provided. Skipping email delivery.');
-    return null;
+  let targetToEmails = toEmails || [];
+  let targetCcEmails = ccEmails || [];
+
+  if (targetToEmails.length === 0) {
+    if (targetCcEmails.length > 0) {
+      targetToEmails = [targetCcEmails[0]];
+      targetCcEmails = targetCcEmails.slice(1);
+    } else {
+      console.warn('[emailService] No recipients provided. Skipping email delivery.');
+      return null;
+    }
   }
 
   // Parse fromEmailRaw which might be of the format "Name <email>"
@@ -67,8 +75,6 @@ function buildTransportForRecipients(toEmails, ccEmails) {
   const fromEmail = match ? match[2].trim() : fromEmailRaw.trim();
 
   // Test mode override: send to MANAGEMENT_EMAIL instead of original recipients
-  let targetToEmails = toEmails;
-  let targetCcEmails = ccEmails;
   if (process.env.TEST_MODE === 'true') {
     const managementEmail = process.env.MANAGEMENT_EMAIL;
     if (managementEmail) {

@@ -203,3 +203,132 @@ export async function runDailyDigestCheck(sheets) {
 
   console.log('[dailyDigestEngine] Daily digest check completed.');
 }
+
+/**
+ * Runs the daily digest check for a specific subset of PODs.
+ * Useful for triggering B2B / POD2 emails separately without running all pods.
+ *
+ * @param {object} sheets    - The google.sheets API client instance
+ * @param {string[]} podNames - Array of POD names to process, e.g. ['B2B', 'POD2']
+ */
+export async function runDigestForPods(sheets, podNames = []) {
+  const normalizedFilter = podNames.map(n => n.trim().toUpperCase());
+  console.log(`[dailyDigestEngine] Starting digest check for pods: ${normalizedFilter.join(', ')}...`);
+
+  let activeTeams = [];
+  try {
+    const collection = await getTeamsCollection();
+    const teams = await collection.find({}).toArray();
+    activeTeams = teams
+      .filter(t => t.active)
+      .filter(t => normalizedFilter.includes((t.name || '').trim().toUpperCase()));
+  } catch (dbErr) {
+    console.error('[dailyDigestEngine] Failed to fetch active teams from MongoDB:', dbErr.message);
+    return;
+  }
+
+  if (activeTeams.length === 0) {
+    console.log(`[dailyDigestEngine] No active teams found for [${normalizedFilter.join(', ')}]. Skipping.`);
+    return;
+  }
+
+  const today = new Date();
+  const todayMidnight = toMidnight(today);
+
+  for (const team of activeTeams) {
+    const podName = (team.name || '').trim().toUpperCase();
+    const recipients = POD_RECIPIENTS[podName];
+    if (!recipients) {
+      console.warn(`[dailyDigestEngine] Team "${team.name}" has no matching POD recipient config. Skipping.`);
+      continue;
+    }
+
+    console.log(`[dailyDigestEngine] Scanning sheets for pod "${podName}"...`);
+    const clientReports = [];
+
+    try {
+      const [dailyTabs, jobTabs] = await Promise.all([
+        getSheetTabs(sheets, team.dailyId),
+        getSheetTabs(sheets, team.jobId),
+      ]);
+
+      const commonClients = getCommonClientTabs(dailyTabs, jobTabs);
+
+      for (const clientName of commonClients) {
+        try {
+          const isPanasonic = (clientName || '').toLowerCase().includes('panasonic');
+
+          const [rawJobs, rawDaily] = await Promise.all([
+            getSheetData(sheets, team.jobId, clientName),
+            getSheetData(sheets, team.dailyId, clientName),
+          ]);
+
+          const jobs = parseJobTrackerRows(rawJobs, clientName, isPanasonic);
+          const pendingJobs = [];
+
+          for (const job of jobs) {
+            const priority = (job.priority || '').toString().trim().toUpperCase();
+            if (priority !== 'L' && priority !== 'XL' && priority !== 'XXL') continue;
+
+            const status = (job.status || '').toString().trim().toLowerCase();
+            if (status === 'closed' || status === 'completed') continue;
+
+            if (!job.clientTimeline || !(job.clientTimeline instanceof Date) || isNaN(job.clientTimeline.getTime())) continue;
+
+            const timelineMidnight = toMidnight(job.clientTimeline);
+            const diffDays = Math.round((timelineMidnight.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
+
+            const isDueToday = (diffDays === 0);
+            const isOverdueXLOrXXL = (diffDays < 0 && (priority === 'XL' || priority === 'XXL') && status === 'in progress');
+
+            if (!isDueToday && !isOverdueXLOrXXL) continue;
+
+            const dueLabel = isDueToday ? 'Today' : `Overdue (${Math.abs(diffDays)}d)`;
+
+            pendingJobs.push({
+              jobId: job.jobId,
+              deliverable: job.deliverable || job.jobId,
+              priority,
+              dueDate: job.clientTimeline.toISOString().split('T')[0],
+              dueLabel,
+              isPanasonic,
+            });
+          }
+
+          let dailyRecords = [];
+          try {
+            dailyRecords = parseDailyTrackerRows(rawDaily, clientName);
+          } catch (dailyErr) {
+            console.error(`[dailyDigestEngine] Failed to parse Daily Tracker for "${clientName}":`, dailyErr.message);
+          }
+
+          const meetingStats = computeMeetingStats(dailyRecords, today);
+
+          if (pendingJobs.length > 0 || meetingStats.elapsedWeekdays > 0) {
+            clientReports.push({ clientName, pendingJobs, meetingStats });
+          }
+        } catch (clientErr) {
+          console.error(`[dailyDigestEngine] Failed to scan client "${clientName}" on pod "${podName}":`, clientErr.message);
+        }
+      }
+    } catch (teamErr) {
+      console.error(`[dailyDigestEngine] Failed to scan pod "${podName}":`, teamErr.message);
+      continue;
+    }
+
+    if (clientReports.length === 0) {
+      console.log(`[dailyDigestEngine] No data to report for pod "${podName}". Skipping email.`);
+      continue;
+    }
+
+    console.log(`[dailyDigestEngine] Sending digest email for pod "${podName}" (${clientReports.length} client(s))...`);
+    await sendPodDigestEmail({
+      podName,
+      to: recipients.to,
+      cc: recipients.cc,
+      clientReports,
+    });
+  }
+
+  console.log(`[dailyDigestEngine] Digest check for [${normalizedFilter.join(', ')}] completed.`);
+}

@@ -17,6 +17,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust the first proxy (e.g. Render's load balancer) to ensure express-rate-limit 
+// correctly identifies client IPs instead of using the load balancer IP.
+app.set('trust proxy', 1);
+
+// Helper function to check if the request should bypass rate limiting via a cron secret token
+const isCronBypass = (req) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) return false;
+  const token = req.headers['x-cron-secret'] || req.query.secret;
+  return token === cronSecret;
+};
+
 // ── Security Headers (Helmet) ────────────────────────────────────────────────
 app.use(helmet());
 
@@ -27,6 +39,7 @@ const generalLimiter = rateLimit({
   limit: 1000, // Limit each IP to 1000 requests per 15 minutes
   standardHeaders: 'draft-7',
   legacyHeaders: false,
+  skip: isCronBypass,
   message: { error: 'Too many requests from this IP, please try again later.' },
 });
 
@@ -36,6 +49,7 @@ const alertTriggerLimiter = rateLimit({
   limit: 60, // Limit each IP to 60 alert trigger requests per hour
   standardHeaders: 'draft-7',
   legacyHeaders: false,
+  skip: isCronBypass,
   message: { error: 'Too many alert trigger requests from this IP, please try again later.' },
 });
 
@@ -264,6 +278,17 @@ app.delete('/api/teams/:id', async (req, res) => {
  * Rate limit applied to protect against spamming API and resources.
  */
 app.get('/api/trigger-daily-digest', alertTriggerLimiter, (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const token = req.headers['x-cron-secret'] || req.query.secret;
+    if (token !== cronSecret) {
+      console.warn('[api] Unauthorized attempt to trigger daily digest (invalid or missing secret).');
+      return res.status(401).json({ error: 'Unauthorized: Invalid or missing cron secret.' });
+    }
+  } else {
+    console.warn('[api] Daily digest triggered without CRON_SECRET verification. It is recommended to set CRON_SECRET in production.');
+  }
+
   console.log('[api] Manual daily digest triggered via HTTP endpoint (asynchronous)...');
 
   // Trigger check in background (non-blocking) to prevent HTTP timeouts
