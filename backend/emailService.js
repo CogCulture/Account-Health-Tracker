@@ -117,8 +117,12 @@ export async function sendPodDigestEmail({ podName, to, cc, clientReports }) {
     return `<span style="background-color: ${colors[priority] || '#64748b'}; color: white; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;">${escapeHTML(priority)}</span>`;
   };
 
-  const clientSectionsHtml = clientReports.map(({ clientName, pendingJobs, meetingStats }) => {
+  const clientSectionsHtml = clientReports.map((report) => {
+    const { clientName, pendingJobs, meetingStats, podName: reportPodName } = report;
     const escapedClientName = escapeHTML(clientName);
+    const podLabel = reportPodName 
+      ? ` <span style="font-size: 11px; background-color: #e2e8f0; color: #475569; padding: 2px 6px; border-radius: 4px; margin-left: 6px; vertical-align: middle; font-weight: normal;">${escapeHTML(reportPodName)}</span>` 
+      : '';
 
     const jobsTableHtml = pendingJobs.length === 0
       ? `<p style="font-size: 13px; color: #64748b; margin: 8px 0;">No pending L/XL/XXL jobs due today.</p>`
@@ -147,7 +151,7 @@ export async function sendPodDigestEmail({ podName, to, cc, clientReports }) {
 
     return `
       <div style="margin-bottom: 24px;">
-        <h3 style="font-size: 15px; color: #0f172a; margin: 0 0 4px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px;">${escapedClientName}</h3>
+        <h3 style="font-size: 15px; color: #0f172a; margin: 0 0 4px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px;">${escapedClientName}${podLabel}</h3>
         ${jobsTableHtml}
         <p style="font-size: 12px; color: #475569; margin: 8px 0 0 0;">
           Daily meeting attendance: <strong>${meetingStats.metDays}/${meetingStats.elapsedWeekdays} days</strong>

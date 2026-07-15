@@ -105,12 +105,21 @@ export async function runDailyDigestCheck(sheets) {
   const today = new Date();
   const todayMidnight = toMidnight(today);
 
+  const podEmailsToSend = []; // Array of { podName, to, clientReports }
+  const consolidatedReports = []; // Array of client reports with podName injected
+  let combinedCcList = [];
+
   for (const team of activeTeams) {
     const podName = (team.name || '').trim().toUpperCase();
     const recipients = POD_RECIPIENTS[podName];
     if (!recipients) {
       console.warn(`[dailyDigestEngine] Team "${team.name}" has no matching POD recipient config. Skipping.`);
       continue;
+    }
+
+    // Accumulate unique CC recipients (management list)
+    if (recipients.cc && recipients.cc.length > 0) {
+      combinedCcList = [...new Set([...combinedCcList, ...recipients.cc])];
     }
 
     console.log(`[dailyDigestEngine] Scanning sheets for pod "${podName}"...`);
@@ -187,18 +196,46 @@ export async function runDailyDigestCheck(sheets) {
       continue;
     }
 
-    if (clientReports.length === 0) {
-      console.log(`[dailyDigestEngine] No data to report for pod "${podName}". Skipping email.`);
-      continue;
-    }
+    if (clientReports.length > 0) {
+      // Queue email to individual pod members
+      podEmailsToSend.push({
+        podName,
+        to: recipients.to,
+        clientReports,
+      });
 
-    console.log(`[dailyDigestEngine] Sending digest email for pod "${podName}" (${clientReports.length} client(s))...`);
+      // Add to consolidated list with podName injected
+      clientReports.forEach(report => {
+        consolidatedReports.push({
+          ...report,
+          podName,
+        });
+      });
+    }
+  }
+
+  // 1. Send pod-specific emails directly to team members (without CC to avoid duplicates)
+  for (const item of podEmailsToSend) {
+    console.log(`[dailyDigestEngine] Sending individual pod digest email for pod "${item.podName}" (${item.clientReports.length} client(s))...`);
     await sendPodDigestEmail({
-      podName,
-      to: recipients.to,
-      cc: recipients.cc,
-      clientReports,
+      podName: item.podName,
+      to: item.to,
+      cc: [],
+      clientReports: item.clientReports,
     });
+  }
+
+  // 2. Send a single consolidated email to management (CC) recipients
+  if (consolidatedReports.length > 0 && combinedCcList.length > 0) {
+    console.log(`[dailyDigestEngine] Sending single consolidated daily digest email to CC list (${consolidatedReports.length} total client(s))...`);
+    await sendPodDigestEmail({
+      podName: 'All Teams Summary',
+      to: combinedCcList,
+      cc: [],
+      clientReports: consolidatedReports,
+    });
+  } else {
+    console.log('[dailyDigestEngine] No consolidated daily digest data or CC recipients found.');
   }
 
   console.log('[dailyDigestEngine] Daily digest check completed.');
@@ -235,12 +272,20 @@ export async function runDigestForPods(sheets, podNames = []) {
   const today = new Date();
   const todayMidnight = toMidnight(today);
 
+  const podEmailsToSend = [];
+  const consolidatedReports = [];
+  let combinedCcList = [];
+
   for (const team of activeTeams) {
     const podName = (team.name || '').trim().toUpperCase();
     const recipients = POD_RECIPIENTS[podName];
     if (!recipients) {
       console.warn(`[dailyDigestEngine] Team "${team.name}" has no matching POD recipient config. Skipping.`);
       continue;
+    }
+
+    if (recipients.cc && recipients.cc.length > 0) {
+      combinedCcList = [...new Set([...combinedCcList, ...recipients.cc])];
     }
 
     console.log(`[dailyDigestEngine] Scanning sheets for pod "${podName}"...`);
@@ -316,18 +361,44 @@ export async function runDigestForPods(sheets, podNames = []) {
       continue;
     }
 
-    if (clientReports.length === 0) {
-      console.log(`[dailyDigestEngine] No data to report for pod "${podName}". Skipping email.`);
-      continue;
-    }
+    if (clientReports.length > 0) {
+      podEmailsToSend.push({
+        podName,
+        to: recipients.to,
+        clientReports,
+      });
 
-    console.log(`[dailyDigestEngine] Sending digest email for pod "${podName}" (${clientReports.length} client(s))...`);
+      clientReports.forEach(report => {
+        consolidatedReports.push({
+          ...report,
+          podName,
+        });
+      });
+    }
+  }
+
+  // 1. Send individual pod emails
+  for (const item of podEmailsToSend) {
+    console.log(`[dailyDigestEngine] Sending individual pod digest email for pod "${item.podName}" (${item.clientReports.length} client(s))...`);
     await sendPodDigestEmail({
-      podName,
-      to: recipients.to,
-      cc: recipients.cc,
-      clientReports,
+      podName: item.podName,
+      to: item.to,
+      cc: [],
+      clientReports: item.clientReports,
     });
+  }
+
+  // 2. Send consolidated email to management
+  if (consolidatedReports.length > 0 && combinedCcList.length > 0) {
+    console.log(`[dailyDigestEngine] Sending single consolidated daily digest email to CC list (${consolidatedReports.length} total client(s))...`);
+    await sendPodDigestEmail({
+      podName: 'All Teams Summary',
+      to: combinedCcList,
+      cc: [],
+      clientReports: consolidatedReports,
+    });
+  } else {
+    console.log('[dailyDigestEngine] No consolidated daily digest data or CC recipients found.');
   }
 
   console.log(`[dailyDigestEngine] Digest check for [${normalizedFilter.join(', ')}] completed.`);
