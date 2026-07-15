@@ -21,7 +21,7 @@ export const POD_RECIPIENTS = {
     cc: ALWAYS_CC,
   },
   PANASONIC: {
-    to: ['vishakh@cogculture.agency', 'deepakshi@cogculture.agency'],
+    to: ['dixitsethi@cogculture.agency', 'gitika@cogculture.agency'],
     cc: ALWAYS_CC,
   },
   B2B: {
@@ -29,7 +29,7 @@ export const POD_RECIPIENTS = {
     cc: ALWAYS_CC,
   },
   POD4: {
-    to: [],
+    to: ['vishakh@cogculture.agency', 'vishal@cogculture.agency', 'deepakshi@cogculture.agency'],
     cc: ALWAYS_CC,
   },
 };

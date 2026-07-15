@@ -23,10 +23,22 @@ function isAttendeeTruthy(val) {
  * Client Health Score Calculator & Insight Generator
  */
 export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMonth, selectedYear) {
+  const today = new Date();
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
   // --- 1. FILTER DAILY TRACKER ROWS BY SELECTED MONTH/YEAR ---
   const filteredDaily = dailyRows.filter(row => {
     const d = row.date;
-    return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+    const matchesPeriod = d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+    if (!matchesPeriod) return false;
+
+    // For the current month/year, only evaluate days up to today
+    if (selectedMonth === today.getMonth() && selectedYear === today.getFullYear()) {
+      const rowMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      return rowMidnight.getTime() <= todayMidnight.getTime();
+    }
+
+    return true;
   });
 
   // If no daily rows match the filter, it suggests a date filtering issue
@@ -410,10 +422,6 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     p3: generateP3Solution(creativeAttendDays, managementAttendDays),
     p4: generateP4Solution(p4Score, proactiveDetails, totalJobsCount),
   };
-
-  const today = new Date();
-  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
   const pendingLargeJobs = jobRows.filter(row => {
     const status = (row.status || '').toString().trim().toLowerCase();
     const isClosedOrCompleted = status === 'closed' || status === 'completed';

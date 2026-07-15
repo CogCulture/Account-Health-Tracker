@@ -97,143 +97,187 @@ export function parseDailyTrackerRows(rows, clientName) {
     throw new Error(`Daily Tracker tab "${clientName}" is empty.`);
   }
 
-  // 1. Locate header row
-  const hIdx = findHeaderRow(rows, 'jsr call');
+  // 1. Locate the general header region. We search for "jsr call" in the first 10 rows.
+  let hIdx = -1;
+  for (let i = 0; i < Math.min(10, rows.length); i++) {
+    const row = rows[i] || [];
+    if (row.some(cell => cell?.toString().toLowerCase().includes('jsr call'))) {
+      hIdx = i;
+      break;
+    }
+  }
+
   if (hIdx === -1) {
     throw new Error(
       `Daily Tracker format invalid. Could not find column headers (missing "Daily JSR Call") in tab "${clientName}".`
     );
   }
 
-  const mainHeaders = rows[hIdx] || [];
-  const subHeaders  = rows[hIdx + 1] || [];
+  // To be robust against row offsets (e.g. July headers in Row 7, June headers in Row 3),
+  // we look at the first 10 rows for all header-matching.
+  const maxHeaderRows = Math.min(10, rows.length);
+  
+  // Find all columns that represent a "Date" column in any of the first 10 rows
+  const dateCols = [];
+  const maxCols = Math.max(...rows.slice(0, maxHeaderRows).map(r => r.length));
+  
+  for (let c = 0; c < maxCols; c++) {
+    for (let r = 0; r < maxHeaderRows; r++) {
+      const val = (rows[r]?.[c] || '').toString().toLowerCase().trim();
+      if (val === 'date' || val === 'date ') {
+        dateCols.push(c);
+        break;
+      }
+    }
+  }
 
-  // Detect subheader row
-  const isSubheader = subHeaders.some(cell => {
-    const txt = cell?.toString().toLowerCase().trim();
-    return (
-      txt === 'name' || txt === 'attend' || txt === 'attendance' ||
-      txt === 'yes/no' || txt === 'y/n' || txt === 'present'
-    );
+  // Fallback: if no date column is found, default to column index 3 (Column D)
+  if (dateCols.length === 0) {
+    dateCols.push(3);
+  }
+
+  // We check if a subheader row exists (contains "name", "attend", etc.)
+  // We check Row 4 and Row 7 since they are the common subheader levels
+  const isSubheader = [4, 7].some(rIdx => {
+    const r = rows[rIdx] || [];
+    return r.some(cell => {
+      const txt = cell?.toString().toLowerCase().trim();
+      return txt === 'name' || txt === 'attend' || txt === 'attendance' || txt === 'yes/no' || txt === 'y/n';
+    });
   });
 
-  const dataStartIdx = isSubheader ? hIdx + 2 : hIdx + 1;
+  // Parse each block
+  const blocks = dateCols.map((dateIdx, bIdx) => {
+    const startCol = Math.max(0, dateIdx - 2);
+    const endCol = (bIdx < dateCols.length - 1) ? dateCols[bIdx + 1] - 1 : maxCols - 1;
 
-  // 2. Map column indices
-  const colMap = {
-    date: -1, mode: -1, jsrCall: -1,
-    jsrName: -1, jsrVerified: -1,
-    clientServicingAttend: -1,
-    designAttend: -1, contentName: -1, strategyName: -1,
-    creativeAttend: -1,
-    managementAttend: -1, managementName: -1,
-  };
+    const colMap = {
+      date: dateIdx, mode: -1, jsrCall: -1,
+      jsrName: -1, jsrVerified: -1,
+      clientServicingAttend: -1,
+      designAttend: -1, contentName: -1, strategyName: -1,
+      creativeAttend: -1,
+      managementAttend: -1, managementName: -1,
+    };
 
-  const firstSeen = { design: false, creative: false, management: false, clientServicing: false };
+    for (let idx = startCol; idx <= endCol; idx++) {
+      // Gather all texts in this column for the first 10 rows
+      const colCells = [];
+      for (let r = 0; r < maxHeaderRows; r++) {
+        const val = (rows[r]?.[idx] || '').toString().toLowerCase().trim();
+        if (val) colCells.push(val);
+      }
+      const combined = colCells.join(' ');
 
-  mainHeaders.forEach((h, idx) => {
-    const ht = (h || '').toString().toLowerCase().trim();
+      if (colCells.includes('mode')) colMap.mode = idx;
 
-    if (ht.includes('date')) colMap.date = idx;
-    if (ht.includes('mode')) colMap.mode = idx;
-
-    if (ht.includes('jsr call') || ht === 'jsr') {
-      colMap.jsrCall = idx;
-      // look for a name sub-column nearby
-      if (isSubheader) {
-        for (let off = 0; off <= 2; off++) {
-          const sub = (subHeaders[idx + off] || '').toString().toLowerCase().trim();
-          if (sub === 'name') { colMap.jsrName = idx + off; break; }
+      if (colCells.some(c => c.includes('jsr call') || c === 'jsr')) {
+        if (colMap.jsrCall === -1) colMap.jsrCall = idx;
+        // Check if there's a name sub-column in this same index
+        if (colCells.includes('name')) colMap.jsrName = idx;
+      }
+      // If we didn't find jsrName directly, check nearby cells in subHeaders (usually the next column)
+      if (colMap.jsrCall !== -1 && colMap.jsrName === -1) {
+        for (let off = 0; off <= 2 && colMap.jsrCall + off <= endCol; off++) {
+          const nextIdx = colMap.jsrCall + off;
+          // check if "name" is in nextIdx's first 10 rows
+          const nextColCells = [];
+          for (let r = 0; r < maxHeaderRows; r++) {
+            const val = (rows[r]?.[nextIdx] || '').toString().toLowerCase().trim();
+            if (val) nextColCells.push(val);
+          }
+          if (nextColCells.includes('name')) {
+            colMap.jsrName = nextIdx;
+            break;
+          }
         }
+      }
+
+      if (combined.includes('verified') || combined.includes('deepakshi')) {
+        colMap.jsrVerified = idx;
+      }
+
+      if (combined.includes('client servicing')) {
+        // Find the "attend" column nearby
+        for (let off = 0; off <= 2 && idx + off <= endCol; off++) {
+          const checkIdx = idx + off;
+          const isAttend = rows.slice(0, maxHeaderRows).some(r => isAttendSubheader(r[checkIdx]));
+          if (isAttend) { colMap.clientServicingAttend = checkIdx; break; }
+        }
+      }
+
+      if (combined.includes('design')) {
+        for (let off = 0; off <= 2 && idx + off <= endCol; off++) {
+          const checkIdx = idx + off;
+          const isAttend = rows.slice(0, maxHeaderRows).some(r => isAttendSubheader(r[checkIdx]));
+          if (isAttend) { colMap.designAttend = checkIdx; break; }
+        }
+      }
+
+      if (combined.includes('creative')) {
+        for (let off = 0; off <= 2 && idx + off <= endCol; off++) {
+          const targetIdx = idx + off;
+          const isAttend = rows.slice(0, maxHeaderRows).some(r => isAttendSubheader(r[targetIdx]));
+          if (isAttend) { colMap.creativeAttend = targetIdx; break; }
+        }
+      }
+
+      if (combined.includes('management')) {
+        for (let off = 0; off <= 3 && idx + off <= endCol; off++) {
+          const targetIdx = idx + off;
+          const colVals = rows.slice(0, maxHeaderRows).map(r => (r[targetIdx] || '').toString().toLowerCase().trim());
+          if (colVals.includes('name') && colMap.managementName === -1) colMap.managementName = targetIdx;
+          if (colVals.some(v => isAttendSubheader(v)) && colMap.managementAttend === -1) colMap.managementAttend = targetIdx;
+        }
+      }
+
+      if (combined.includes('content')) colMap.contentName = idx;
+      if (combined.includes('strategy') || combined.includes('stratergy')) {
+        colMap.strategyName = idx;
       }
     }
 
-    // Deepakshi verification column
-    if (ht.includes('verified') || ht.includes('deepakshi')) {
-      colMap.jsrVerified = idx;
-    }
-
-    if (ht.includes('client servicing')) {
-      if (isSubheader) {
-        for (let off = 0; off <= 2; off++) {
-          if (isAttendSubheader(subHeaders[idx + off])) { colMap.clientServicingAttend = idx + off; break; }
-        }
-      } else if (!firstSeen.clientServicing) {
-        colMap.clientServicingAttend = idx; firstSeen.clientServicing = true;
-      }
-    }
-
-    if (ht.includes('design')) {
-      if (isSubheader) {
-        for (let off = 0; off <= 2; off++) {
-          if (isAttendSubheader(subHeaders[idx + off])) { colMap.designAttend = idx + off; break; }
-        }
-      } else if (!firstSeen.design) {
-        colMap.designAttend = idx; firstSeen.design = true;
-      }
-    }
-
-    if (ht.includes('creative')) {
-      if (isSubheader) {
-        for (let off = 0; off <= 2; off++) {
-          if (isAttendSubheader(subHeaders[idx + off])) { colMap.creativeAttend = idx + off; break; }
-        }
-      } else if (!firstSeen.creative) {
-        colMap.creativeAttend = idx; firstSeen.creative = true;
-      }
-    }
-
-    if (ht.includes('management')) {
-      if (isSubheader) {
-        for (let off = 0; off <= 3; off++) {
-          const sub = (subHeaders[idx + off] || '').toString().toLowerCase().trim();
-          if (sub === 'name' && colMap.managementName === -1) colMap.managementName = idx + off;
-          if (isAttendSubheader(subHeaders[idx + off]) && colMap.managementAttend === -1) colMap.managementAttend = idx + off;
-        }
-      } else if (!firstSeen.management) {
-        colMap.managementAttend = idx; firstSeen.management = true;
-      }
-    }
-
-    if (ht.includes('content')) colMap.contentName = idx;
-    if (ht.includes('strategy') || ht.includes('stratergy')) colMap.strategyName = idx;
+    return colMap;
   });
 
-  const sheetHasDesignOrCreativeCol =
-    colMap.creativeAttend !== -1 || colMap.designAttend !== -1;
-
-  // 3. Extract records
   const records = [];
-  for (let i = dataStartIdx; i < rows.length; i++) {
+  // For data start index, since data starts after headers, we can just start from Row 5.
+  // Any row that doesn't have a valid parsed date in the date column will be skipped automatically!
+  for (let i = 5; i < rows.length; i++) {
     const row = rows[i] || [];
     if (row.length === 0) continue;
 
-    const dateVal = row[colMap.date !== -1 ? colMap.date : 3];
-    if (dateVal === undefined || dateVal === '' ||
-        dateVal?.toString().toLowerCase().includes('weekend')) continue;
+    blocks.forEach(colMap => {
+      const dateVal = row[colMap.date];
+      if (dateVal === undefined || dateVal === '' ||
+          dateVal?.toString().toLowerCase().includes('weekend')) return;
 
-    const dateParsed = parseExcelDate(dateVal);
-    if (!dateParsed) continue;
+      const dateParsed = parseExcelDate(dateVal);
+      if (!dateParsed) return;
 
-    const mode    = colMap.mode !== -1 ? (row[colMap.mode] ?? '').toString().trim() : '';
-    const jsrCell = colMap.jsrCall !== -1 ? row[colMap.jsrCall] : false;
-    const jsrCall = isAttendeeTruthy(jsrCell);
+      const mode    = colMap.mode !== -1 ? (row[colMap.mode] ?? '').toString().trim() : '';
+      const jsrCell = colMap.jsrCall !== -1 ? row[colMap.jsrCall] : false;
+      const jsrCall = isAttendeeTruthy(jsrCell);
 
-    records.push({
-      date: dateParsed,
-      mode,
-      jsrCall,
-      jsrVerified:         colMap.jsrVerified      !== -1 ? isAttendeeTruthy(row[colMap.jsrVerified])  : false,
-      jsrNameCol:          colMap.jsrName           !== -1 ? row[colMap.jsrName]         : null,
-      creativeAttendCol:   colMap.creativeAttend   !== -1 ? row[colMap.creativeAttend]   : null,
-      managementAttendCol: colMap.managementAttend !== -1 ? row[colMap.managementAttend] : null,
-      managementNameCol:   colMap.managementName   !== -1 ? row[colMap.managementName]   : null,
-      designAttendCol:     colMap.designAttend     !== -1 ? row[colMap.designAttend]     : null,
-      contentNameCol:      colMap.contentName      !== -1 ? row[colMap.contentName]      : null,
-      strategyNameCol:     colMap.strategyName     !== -1 ? row[colMap.strategyName]     : null,
-      rawRowCells: row.map(c => c?.toString() || ''),
+      records.push({
+        date: dateParsed,
+        mode,
+        jsrCall,
+        jsrVerified:         colMap.jsrVerified      !== -1 ? isAttendeeTruthy(row[colMap.jsrVerified])  : false,
+        jsrNameCol:          colMap.jsrName           !== -1 ? row[colMap.jsrName]         : null,
+        creativeAttendCol:   colMap.creativeAttend   !== -1 ? row[colMap.creativeAttend]   : null,
+        managementAttendCol: colMap.managementAttend !== -1 ? row[colMap.managementAttend] : null,
+        managementNameCol:   colMap.managementName   !== -1 ? row[colMap.managementName]   : null,
+        designAttendCol:     colMap.designAttend     !== -1 ? row[colMap.designAttend]     : null,
+        contentNameCol:      colMap.contentName      !== -1 ? row[colMap.contentName]      : null,
+        strategyNameCol:     colMap.strategyName     !== -1 ? row[colMap.strategyName]     : null,
+        rawRowCells: row.map(c => c?.toString() || ''),
+      });
     });
   }
+
+  // Sort records by date ascending
+  records.sort((a, b) => a.date.getTime() - b.date.getTime());
 
   return records;
 }
