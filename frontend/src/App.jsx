@@ -5,6 +5,7 @@ import HistoryView from './components/HistoryView';
 import OverviewDashboard from './components/OverviewDashboard';
 import ErrorModal from './components/ErrorModal';
 import SheetSetup from './components/SheetSetup';
+import MeetingsView from './components/MeetingsView';
 import { fetchSheetData, fetchSheetTabs } from './utils/sheetsApi';
 import { parseDailyTrackerRows, parseJobTrackerRows, getCommonClientTabs } from './utils/sheetsParser';
 import { calculateHealthScore } from './utils/scoreEngine';
@@ -42,7 +43,7 @@ export default function App() {
   const [errorMsg,    setErrorMsg]    = useState('');
   const [isErrorOpen, setIsErrorOpen] = useState(false);
 
-  // View: 'dashboard' | 'history' | 'overview'
+  // View: 'dashboard' | 'history' | 'overview' | 'meetings'
   const [view, setView] = useState('overview');
 
   // Load active teams from backend on startup
@@ -284,6 +285,7 @@ export default function App() {
       <ClientSidebar
         onShowHistory={() => setView(view === 'history' ? 'dashboard' : 'history')}
         onShowOverview={() => setView(view === 'overview' ? 'dashboard' : 'overview')}
+        onShowMeetings={() => setView(view === 'meetings' ? 'dashboard' : 'meetings')}
         onShowSettings={() => setShowSetup(true)}
         month={month}
         year={year}
@@ -308,6 +310,8 @@ export default function App() {
               setView('dashboard');
             }}
           />
+        ) : view === 'meetings' ? (
+          <MeetingsView />
         ) : view === 'overview' ? (
           <OverviewDashboard
             clients={clients}

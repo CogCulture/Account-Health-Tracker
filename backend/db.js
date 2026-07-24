@@ -1,4 +1,11 @@
+import dns from 'node:dns';
 import { MongoClient } from 'mongodb';
+
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch (e) {
+  // ignore if custom DNS cannot be set
+}
 
 const uri = process.env.MONGODB_URI;
 let client;
@@ -27,4 +34,13 @@ export async function connectToDatabase() {
 export async function getTeamsCollection() {
   const database = await connectToDatabase();
   return database.collection('teams');
+}
+
+/**
+ * Returns the meetingInsights collection instance (Fathom-synced and
+ * manually-uploaded meeting transcripts run through Mistral extraction).
+ */
+export async function getMeetingInsightsCollection() {
+  const database = await connectToDatabase();
+  return database.collection('meetingInsights');
 }

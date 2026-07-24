@@ -8,9 +8,12 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import cron from 'node-cron';
+import multer from 'multer';
 import { runDailyDigestCheck } from './dailyDigestEngine.js';
-import { getTeamsCollection } from './db.js';
+import { getTeamsCollection, getMeetingInsightsCollection } from './db.js';
 import { ALLOWED_TEAM_NAMES } from './podConfig.js';
+import { transcribeAudio, extractMeetingInsights } from './mistralService.js';
+import { listRecentMeetings, meetingTranscriptToText } from './fathomService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +71,11 @@ app.use(cors({
 
 app.use(express.json());
 
+// ── Multer (in-memory, for meeting audio uploads) ────────────────────────────
+const audioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB, generous for an hour-long meeting recording
+});
 
 // ── Google Auth via Service Account ─────────────────────────────────────────
 let auth;
@@ -302,6 +310,109 @@ app.get('/api/trigger-daily-digest', alertTriggerLimiter, (req, res) => {
 
   // Respond immediately to the client
   res.json({ success: true, message: 'Daily digest triggered and running in the background.' });
+});
+
+// ── Meeting Insights (Fathom sync + manual upload → Mistral extraction) ─────
+
+/**
+ * POST /api/meetings/upload
+ * Accepts a meeting audio recording (multipart/form-data, field name "audio"),
+ * transcribes it via Mistral Voxtral, then extracts attendees, jobs discussed,
+ * and per-job insights via Mistral chat completion. Saves and returns the result.
+ */
+app.post('/api/meetings/upload', alertTriggerLimiter, audioUpload.single('audio'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No audio file provided (expected multipart field "audio").' });
+  }
+  const meetingTitle = typeof req.body?.meetingTitle === 'string' ? req.body.meetingTitle.trim() : '';
+
+  try {
+    const { text: transcriptText } = await transcribeAudio(req.file.buffer, req.file.originalname);
+    if (!transcriptText || !transcriptText.trim()) {
+      return res.status(422).json({ error: 'Transcription produced no text — check the audio file.' });
+    }
+
+    const insights = await extractMeetingInsights(transcriptText, meetingTitle);
+
+    const collection = await getMeetingInsightsCollection();
+    const doc = {
+      source: 'upload',
+      sourceMeetingId: null,
+      meetingTitle: meetingTitle || null,
+      meetingDate: new Date(),
+      transcriptText,
+      ...insights,
+      createdAt: new Date(),
+    };
+    const result = await collection.insertOne(doc);
+
+    res.json({ success: true, meeting: { ...doc, _id: result.insertedId } });
+  } catch (err) {
+    console.error('[server] POST /api/meetings/upload error:', err);
+    res.status(500).json({ error: 'Failed to process uploaded meeting audio.' });
+  }
+});
+
+/**
+ * POST /api/meetings/fathom/sync
+ * Pulls meetings from Fathom recorded in the last 30 days, runs any not
+ * already processed through Mistral extraction, and stores the results.
+ */
+app.post('/api/meetings/fathom/sync', alertTriggerLimiter, async (req, res) => {
+  try {
+    const collection = await getMeetingInsightsCollection();
+    const sinceDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const meetings = await listRecentMeetings(sinceDate);
+
+    const processed = [];
+    for (const meeting of meetings) {
+      const sourceMeetingId = meeting.id || meeting.recording_id;
+      if (!sourceMeetingId) continue;
+
+      const existing = await collection.findOne({ source: 'fathom', sourceMeetingId });
+      if (existing) continue;
+
+      const transcriptText = meetingTranscriptToText(meeting);
+      if (!transcriptText.trim()) continue;
+
+      const meetingTitle = meeting.title || meeting.meeting_title || '';
+      const insights = await extractMeetingInsights(transcriptText, meetingTitle);
+
+      const doc = {
+        source: 'fathom',
+        sourceMeetingId,
+        meetingTitle: meetingTitle || null,
+        meetingDate: meeting.created_at ? new Date(meeting.created_at) : new Date(),
+        transcriptText,
+        fathomSummary: meeting.default_summary?.markdown_formatted || null,
+        ...insights,
+        createdAt: new Date(),
+      };
+      const result = await collection.insertOne(doc);
+      processed.push({ ...doc, _id: result.insertedId });
+    }
+
+    res.json({ success: true, newMeetingsProcessed: processed.length, meetings: processed });
+  } catch (err) {
+    console.error('[server] POST /api/meetings/fathom/sync error:', err);
+    res.status(500).json({ error: 'Failed to sync meetings from Fathom.' });
+  }
+});
+
+/**
+ * GET /api/meetings/insights
+ * Returns stored meeting insights (both Fathom-synced and manually uploaded),
+ * most recent first.
+ */
+app.get('/api/meetings/insights', async (_req, res) => {
+  try {
+    const collection = await getMeetingInsightsCollection();
+    const meetings = await collection.find({}).sort({ meetingDate: -1 }).toArray();
+    res.json({ meetings });
+  } catch (err) {
+    console.error('[server] GET /api/meetings/insights error:', err);
+    res.status(500).json({ error: 'Failed to retrieve meeting insights.' });
+  }
 });
 
 // ── Background Cron Scheduler ──────────────────────────────────────────────

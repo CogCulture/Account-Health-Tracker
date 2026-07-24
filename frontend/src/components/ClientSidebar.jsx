@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search, HeartPulse, ChevronRight, Calendar, History, Settings, LayoutGrid } from 'lucide-react';
+import { RefreshCw, Search, HeartPulse, ChevronRight, Calendar, History, Settings, LayoutGrid, Mic } from 'lucide-react';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -18,6 +18,7 @@ export default function ClientSidebar({
   onShowHistory,
   onShowOverview,
   onShowSettings,
+  onShowMeetings,
   // Period state (controlled by parent so ScoreScreen knows the period)
   month, year, onMonthChange, onYearChange,
   // Client selection
@@ -186,18 +187,18 @@ export default function ClientSidebar({
           <span>Manage Teams</span>
         </button>
 
-        {/* History row */}
+        {/* History / Meetings row */}
         <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
-          <button 
-            className="theme-toggle" 
-            onClick={onShowHistory} 
-            title="View history" 
-            style={{ 
-              width: '100%',
-              height: 34, 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
+          <button
+            className="theme-toggle"
+            onClick={onShowHistory}
+            title="View history"
+            style={{
+              flex: 1,
+              height: 34,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               gap: '0.4rem',
               borderRadius: 8,
               background: 'rgba(255, 255, 255, 0.04)',
@@ -209,6 +210,28 @@ export default function ClientSidebar({
           >
             <History size={13} />
             <span>History</span>
+          </button>
+          <button
+            className="theme-toggle"
+            onClick={onShowMeetings}
+            title="Meeting insights"
+            style={{
+              flex: 1,
+              height: 34,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.4rem',
+              borderRadius: 8,
+              background: 'rgba(255, 255, 255, 0.04)',
+              border: '1px solid var(--card-border)',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+              fontSize: '0.78rem',
+            }}
+          >
+            <Mic size={13} />
+            <span>Meetings</span>
           </button>
         </div>
 
