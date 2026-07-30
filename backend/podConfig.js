@@ -9,7 +9,11 @@
 export const ALLOWED_TEAM_NAMES = ['POD1', 'POD2', 'PANASONIC', 'B2B', 'POD4'];
 
 // Always CC'd on every pod digest email.
+<<<<<<< HEAD
 const ALWAYS_CC = ['vaibhav@cogculture.agency', 'ashok@cogculture.agency', 'rohansharma@cogculture.agency', 'shourya@cogculture.agency', 'pallave@cogculture.agency'];
+=======
+const ALWAYS_CC = ['vaibhav@cogculture.agency', 'ashok@cogculture.agency', 'rohansharma@cogculture.agency', 'shourya@cogculture.agency'];
+>>>>>>> 8fd5d5d15ff32b008fa558354df223f23a558dc8
 
 export const POD_RECIPIENTS = {
   POD1: {
