@@ -84,8 +84,8 @@ function computeMeetingStats(dailyRecords, today) {
  * and emails a consolidated digest to each POD's recipients.
  * @param {object} sheets - The google.sheets API client instance
  */
-export async function runDailyDigestCheck(sheets) {
-  console.log('[dailyDigestEngine] Starting daily digest check...');
+export async function runDailyDigestCheck(sheets, overrideEmail = null) {
+  console.log(`[dailyDigestEngine] Starting daily digest check${overrideEmail ? ` (override recipient: ${overrideEmail})` : ''}...`);
 
   let activeTeams = [];
   try {
@@ -212,6 +212,23 @@ export async function runDailyDigestCheck(sheets) {
         });
       });
     }
+  }
+
+  // If overrideEmail is provided, send only to that single email address
+  if (overrideEmail) {
+    if (consolidatedReports.length > 0) {
+      console.log(`[dailyDigestEngine] Sending single JSR report email to override recipient: ${overrideEmail}...`);
+      await sendPodDigestEmail({
+        podName: 'JSR Summary Report',
+        to: [overrideEmail],
+        cc: [],
+        clientReports: consolidatedReports,
+      });
+    } else {
+      console.log(`[dailyDigestEngine] No report data found for override recipient ${overrideEmail}.`);
+    }
+    console.log('[dailyDigestEngine] Daily digest check completed.');
+    return;
   }
 
   // 1. Send pod-specific emails directly to team members (without CC to avoid duplicates)

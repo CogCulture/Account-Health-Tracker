@@ -297,10 +297,15 @@ app.get('/api/trigger-daily-digest', alertTriggerLimiter, (req, res) => {
     console.warn('[api] Daily digest triggered without CRON_SECRET verification. It is recommended to set CRON_SECRET in production.');
   }
 
-  console.log('[api] Manual daily digest triggered via HTTP endpoint (asynchronous)...');
+  // Extract optional recipient override from query string (e.g. ?to=user@example.com)
+  const recipientOverride = (typeof req.query.to === 'string' && req.query.to.trim()) 
+    ? req.query.to.trim() 
+    : ((typeof req.query.email === 'string' && req.query.email.trim()) ? req.query.email.trim() : null);
+
+  console.log(`[api] Manual daily digest triggered via HTTP endpoint${recipientOverride ? ` for single recipient (${recipientOverride})` : ''}...`);
 
   // Trigger check in background (non-blocking) to prevent HTTP timeouts
-  runDailyDigestCheck(sheets)
+  runDailyDigestCheck(sheets, recipientOverride)
     .then(() => {
       console.log('[api] Background daily digest completed successfully.');
     })
@@ -309,7 +314,12 @@ app.get('/api/trigger-daily-digest', alertTriggerLimiter, (req, res) => {
     });
 
   // Respond immediately to the client
-  res.json({ success: true, message: 'Daily digest triggered and running in the background.' });
+  res.json({ 
+    success: true, 
+    message: recipientOverride 
+      ? `Daily digest triggered and sending to ${recipientOverride}.` 
+      : 'Daily digest triggered and running in the background.' 
+  });
 });
 
 // ── Meeting Insights (Fathom sync + manual upload → Mistral extraction) ─────
