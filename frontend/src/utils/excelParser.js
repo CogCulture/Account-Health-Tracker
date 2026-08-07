@@ -137,6 +137,7 @@ export function parseDailyTrackerRows(workbook, clientName) {
     strategyName: -1,
     creativeAttend: -1,
     managementAttend: -1,
+    managementName: -1,
   };
 
   // Scan main headers
@@ -216,9 +217,11 @@ export function parseDailyTrackerRows(workbook, clientName) {
     if (headerText.includes('management')) {
       if (isSubheader) {
         for (let offset = 0; offset <= 2; offset++) {
+          const subTxt = (subHeaders[idx + offset] || '').toString().toLowerCase().trim();
           if (isAttendSubheader(subHeaders[idx + offset])) {
             colMap.managementAttend = idx + offset;
-            break;
+          } else if (subTxt === 'name' || subTxt.includes('name')) {
+            colMap.managementName = idx + offset;
           }
         }
       } else if (!firstSeenTeam.management) {
@@ -276,6 +279,7 @@ export function parseDailyTrackerRows(workbook, clientName) {
       jsrCall,
       creativeAttendCol: colMap.creativeAttend !== -1 ? row[colMap.creativeAttend] : null,
       managementAttendCol: colMap.managementAttend !== -1 ? row[colMap.managementAttend] : null,
+      managementNameCol: colMap.managementName !== -1 ? row[colMap.managementName] : null,
       designAttendCol: colMap.designAttend !== -1 ? row[colMap.designAttend] : null,
       contentNameCol: colMap.contentName !== -1 ? row[colMap.contentName] : null,
       strategyNameCol: colMap.strategyName !== -1 ? row[colMap.strategyName] : null,
@@ -303,20 +307,23 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
   const isPanasonicCheck = isPanasonic || (clientName || '').toLowerCase().includes('panasonic');
-  const needle = isPanasonicCheck ? 'deliverable' : 'job id';
 
-  // 1. Locate header row
+  // 1. Locate header row flexibly
   let hIdx = -1;
+  const keywords = ['job id', 'deliverable', 'deliverables', 'job name', 'job type', 'brief date'];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    if (row && row.some(cell => cell.toString().toLowerCase().trim() === needle)) {
+    if (row && row.some(cell => {
+      const txt = (cell || '').toString().toLowerCase().trim();
+      return keywords.some(kw => txt.includes(kw));
+    })) {
       hIdx = i;
       break;
     }
   }
 
   if (hIdx === -1) {
-    throw new Error(`Job Tracker format invalid. Could not find column headers (missing "${needle.toUpperCase()}") in sheet "${targetSheetName}".`);
+    throw new Error(`Job Tracker format invalid. Could not find column headers in sheet "${targetSheetName}".`);
   }
 
   const headers = rows[hIdx];
@@ -336,20 +343,17 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
   };
 
   headers.forEach((h, idx) => {
-    const txt = h.toString().toLowerCase().trim();
+    const txt = (h || '').toString().toLowerCase().trim();
     if (txt === 'job id' || txt === 'job_id') colMap.jobId = idx;
-    // 'deliverables' (plural) is Panasonic's column name
-    if (txt === 'deliverable' || (isPanasonicCheck && txt === 'deliverables')) colMap.deliverable = idx;
-    if (txt === 'job type') colMap.jobType = idx;
+    if (txt === 'deliverable' || txt === 'deliverables' || txt.includes('deliverable') || txt === 'job name' || txt === 'task') colMap.deliverable = idx;
+    if (txt === 'job type' || txt.includes('job type')) colMap.jobType = idx;
     if (txt === 'status') colMap.status = idx;
-    if (txt === 'brief date') colMap.briefDate = idx;
-    // Panasonic uses 'External Timeline' for the client-facing deadline
-    if (txt === 'client timeline' || txt === 'client_timeline' || (isPanasonicCheck && txt === 'external timeline')) colMap.clientTimeline = idx;
+    if (txt === 'brief date' || txt.includes('brief date')) colMap.briefDate = idx;
+    if (txt === 'client timeline' || txt === 'client_timeline' || txt === 'external timeline' || txt.includes('client timeline')) colMap.clientTimeline = idx;
     if (txt.includes('delivery date') || txt === 'delivery_date') colMap.deliveryDate = idx;
-    if (txt.includes('job closing date') || txt === 'closing_date') colMap.closingDate = idx;
+    if (txt.includes('closing date') || txt.includes('job closing date') || txt === 'closing_date') colMap.closingDate = idx;
     if (txt === 'timeline status') colMap.timelineStatus = idx;
-    // 'prority' (sic) is Panasonic's misspelled column name
-    if (txt === 'priority' || (isPanasonicCheck && txt === 'prority')) colMap.priority = idx;
+    if (txt === 'priority' || txt === 'prority') colMap.priority = idx;
   });
 
   const records = [];
@@ -360,13 +364,13 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
     }
 
     let jobId = '';
-    if (isPanasonicCheck) {
-      const deliverable = colMap.deliverable !== -1 ? row[colMap.deliverable] : '';
-      if (!deliverable) continue;
-      jobId = `panasonic-job-${i}`;
+    if (colMap.jobId !== -1 && row[colMap.jobId]) {
+      jobId = row[colMap.jobId];
     } else {
-      if (!row[colMap.jobId !== -1 ? colMap.jobId : 0]) continue;
-      jobId = row[colMap.jobId !== -1 ? colMap.jobId : 0];
+      const deliverable = colMap.deliverable !== -1 ? row[colMap.deliverable] : '';
+      const jobType = colMap.jobType !== -1 ? row[colMap.jobType] : '';
+      if (!deliverable && !jobType && !row[0]) continue;
+      jobId = `job-${i}`;
     }
 
     const deliverable = colMap.deliverable !== -1 ? row[colMap.deliverable] : '';

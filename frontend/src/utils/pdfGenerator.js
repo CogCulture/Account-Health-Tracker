@@ -5,20 +5,33 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-/**
- * Generates and downloads a Client Health Score PDF Report
- * @param {Object} data - Result object from calculateHealthScore
- */
-export function generateHealthReportPDF(data) {
+// Helper to draw a pie slice (arc) using triangles for vanilla jsPDF
+function drawPieSlice(doc, x, y, radius, startAngle, endAngle, color) {
+  doc.setFillColor(color[0], color[1], color[2]);
+  doc.setDrawColor(color[0], color[1], color[2]);
+  
+  const steps = Math.max(10, Math.ceil(Math.abs(endAngle - startAngle) * 15));
+  const angleStep = (endAngle - startAngle) / steps;
+  
+  const points = [[x, y]];
+  for (let i = 0; i <= steps; i++) {
+    const angle = startAngle + (i * angleStep);
+    points.push([
+      x + radius * Math.cos(angle),
+      y + radius * Math.sin(angle)
+    ]);
+  }
+  
+  for (let i = 1; i < points.length - 1; i++) {
+    doc.triangle(points[0][0], points[0][1], points[i][0], points[i][1], points[i+1][0], points[i+1][1], 'F');
+  }
+}
+
+// Helper to draw a single client scorecard on the current page of a jsPDF doc
+function drawClientScorecardPage(doc, data) {
   const { clientName, month, year, scores, metrics, rating, badgeColor, badgeText, ratingBand, insights } = data;
   const monthName = MONTH_NAMES[month];
   
-  const doc = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a4'
-  });
-
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   
@@ -85,7 +98,7 @@ export function generateHealthReportPDF(data) {
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
-  doc.text(`${ratingBand} ${badgeText.toUpperCase()}`, pageWidth - 67, 34);
+  doc.text(`${badgeText.toUpperCase()}`, pageWidth - 67, 34);
 
   // --- HORIZONTAL SEPARATOR ---
   doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
@@ -127,7 +140,7 @@ export function generateHealthReportPDF(data) {
     },
     {
       name: '3. Cross-Functional Meeting',
-      summary: `Creative: ${metrics.p3.hasCreativeAttend ? 'Attended' : 'Absent'} | Management: ${metrics.p3.hasManagementAttend ? 'Attended' : 'Absent'}`,
+      summary: `Creative: ${metrics.p3.creativeAttendDays > 0 ? 'Attended' : 'Absent'} | Management: ${metrics.p3.managementAttendDays > 0 ? 'Attended' : 'Absent'}`,
       score: `${scores.p3} / 10`
     },
     {
@@ -171,65 +184,378 @@ export function generateHealthReportPDF(data) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.setTextColor(220, 38, 38); // red text
-    doc.text(`WARNING: -${scores.escalationDeduction}% Escalation Penalty applied due to ${Math.round(scores.escalationPercentage)}% tasks escalated.`, 14, penaltyY + 6.5);
+    doc.text(`WARNING: -${scores.escalationDeduction}% Escalation Penalty applied. ${data.escalationCount} of ${metrics.p4.totalJobsCount} tasks (${Math.round(scores.escalationPercentage)}%) were escalated.`, 14, penaltyY + 6.5);
   }
 
-  // --- INSIGHTS & STRATEGIC RECOMMENDATIONS ---
-  const insightsStart = tableTop + 8 + (4 * rowHeight) + 12 + penaltyOffset;
+
+  // --- DELIVERY DATE BREAKDOWN (PAGE 1) ---
+  let curY = tableTop + 8 + (4 * rowHeight) + 4 + penaltyOffset + 10;
+  
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
+  doc.setFontSize(16);
   doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-  doc.text('Automated Insights & Recommendations', 10, insightsStart);
+  doc.text('DELIVERY DATE BREAKDOWN', 10, curY);
+  doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+  doc.line(10, curY + 4, pageWidth - 10, curY + 4);
+  
+  curY += 10;
 
-  let curY = insightsStart + 6;
+  const closedJobs = metrics.p2.jobs || [];
 
-  const insightsList = [
-    { label: 'JSR Calling', text: insights.p1 },
-    { label: 'Delivery Performance', text: insights.p2 },
-    { label: 'Cross-Functional Attendance', text: insights.p3 },
-    { label: 'Client Proactiveness', text: insights.p4 }
-  ];
+  // Score this month box
+  doc.setDrawColor(16, 185, 129); // emerald border
+  doc.setFillColor(248, 250, 252);
+  doc.rect(10, curY, pageWidth - 20, 12, 'FD');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.text('Score this month', 14, curY + 8);
+  
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(16, 185, 129);
+  doc.text(`${scores.p2}`, pageWidth - 25, curY + 8.5);
+  doc.setFontSize(10);
+  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+  doc.text('/10', pageWidth - 17, curY + 8.5);
+  
+  curY += 20;
 
-  insightsList.forEach((insight) => {
-    // Check space remaining on page, if too small, draw border/background carefully
-    doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
-    doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
-    
-    // Format paragraph text with page margin constraints
-    const splitText = doc.splitTextToSize(insight.text, pageWidth - 32);
-    const boxHeight = 8 + (splitText.length * 5);
+  // THIS MONTH AT A GLANCE
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+  doc.text('THIS MONTH AT A GLANCE', 10, curY);
+  
+  curY += 4;
+  const boxW = (pageWidth - 24) / 3;
+  
+  // Jobs closed box
+  doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+  doc.rect(10, curY, boxW, 16);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.text(`${metrics.p2.totalClosed}`, 10 + boxW/2, curY + 9, { align: 'center' });
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+  doc.text('Jobs closed', 10 + boxW/2, curY + 14, { align: 'center' });
 
-    // Draw card background
-    doc.rect(10, curY, pageWidth - 20, boxHeight, 'F');
-    doc.rect(10, curY, pageWidth - 20, boxHeight);
-    
-    // Left decorative bar
-    doc.setFillColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-    doc.rect(11, curY + 1, 1.5, boxHeight - 2, 'F');
+  // On time box
+  doc.rect(10 + boxW + 2, curY, boxW, 16);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(16, 185, 129); // green
+  doc.text(`${metrics.p2.onTimeJobs}`, 10 + boxW + 2 + boxW/2, curY + 9, { align: 'center' });
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+  doc.text('On time', 10 + boxW + 2 + boxW/2, curY + 14, { align: 'center' });
 
-    // Title
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9.5);
-    doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    doc.text(insight.label.toUpperCase(), 16, curY + 5.5);
+  // Delayed box
+  doc.rect(10 + (boxW + 2)*2, curY, boxW, 16);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(239, 68, 68); // red
+  const dCount = metrics.p2.totalClosed - metrics.p2.onTimeJobs;
+  doc.text(`${dCount}`, 10 + (boxW + 2)*2 + boxW/2, curY + 9, { align: 'center' });
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+  doc.text('Delayed', 10 + (boxW + 2)*2 + boxW/2, curY + 14, { align: 'center' });
 
-    // Body text
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8.5);
-    doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-    doc.text(splitText, 16, curY + 11.5);
+  curY += 24;
 
-    curY += boxHeight + 4;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+  doc.text('ON-TIME BY PRIORITY', 10, curY);
+  
+  curY += 6;
+  const priOrder = ['XXL', 'XL', 'L', 'M', 'S'];
+  
+  priOrder.forEach(pri => {
+    const pJobs = closedJobs.filter(j => j.priority === pri);
+    if (pJobs.length > 0) {
+      const onTimeP = pJobs.filter(j => j.onTime).length;
+      const pct = Math.round((onTimeP / pJobs.length) * 100);
+      
+      // Draw label
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.text(pri, 10, curY);
+      
+      // Draw fraction
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.text(`${onTimeP}/${pJobs.length} on time (${pct}%)`, pageWidth - 45, curY);
+      
+      // Draw progress bar background
+      curY += 3;
+      doc.setFillColor(241, 245, 249);
+      doc.rect(10, curY, pageWidth - 20, 3, 'F');
+      
+      // Draw progress bar foreground
+      if (pct > 0) {
+        let barColor = [16, 185, 129]; // green
+        if (pct < 75) barColor = [245, 158, 11]; // orange
+        if (pct < 50) barColor = [239, 68, 68]; // red
+        doc.setFillColor(barColor[0], barColor[1], barColor[2]);
+        doc.rect(10, curY, (pageWidth - 20) * (pct / 100), 3, 'F');
+      }
+      
+      curY += 10;
+    }
   });
 
-  // --- FOOTER SECTION ---
+  // --- PAGE 2: JOB LEVEL ANALYSIS ---
+  doc.addPage();
+  doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+  doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
+  
+  // Jobs Table
+  let tableY = 18;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.text('High Priority Jobs (XL & XXL)', 10, tableY);
+
+  tableY += 6;
+  doc.setFillColor(241, 245, 249);
+  doc.rect(10, tableY, pageWidth - 20, 8, 'F');
+  doc.rect(10, tableY, pageWidth - 20, 8);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+  doc.text('DELIVERABLE', 12, tableY + 5.5);
+  doc.text('PRIORITY', 95, tableY + 5.5);
+  doc.text('STATUS', 125, tableY + 5.5);
+  doc.text('DEADLINE', 165, tableY + 5.5);
+
+  tableY += 8;
+  const allJobs = (data.jobsList || []).filter(j => {
+    const p = (j.priority || '').toString().toUpperCase();
+    return p === 'XL' || p === 'XXL';
+  });
+  
+  let currentRowsOnPage = 0;
+  if (allJobs.length === 0) {
+    doc.setFont('helvetica', 'italic');
+    doc.text('No high priority jobs logged.', 12, tableY + 6);
+    currentRowsOnPage = 1;
+  } else {
+    doc.setFont('helvetica', 'normal');
+    
+    let maxRowsForCurrentPage = 30; // first table page has the 'All Monthly Jobs' header
+    
+    allJobs.forEach((job, i) => {
+      if (currentRowsOnPage >= maxRowsForCurrentPage) {
+        // Create a new page for continuation
+        doc.addPage();
+        doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+        doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
+        
+        tableY = 15;
+        doc.setFillColor(241, 245, 249);
+        doc.rect(10, tableY, pageWidth - 20, 8, 'F');
+        doc.rect(10, tableY, pageWidth - 20, 8);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+        doc.text('DELIVERABLE (CONT.)', 12, tableY + 5.5);
+        doc.text('PRIORITY', 95, tableY + 5.5);
+        doc.text('STATUS', 125, tableY + 5.5);
+        doc.text('DEADLINE', 165, tableY + 5.5);
+        
+        tableY += 8;
+        currentRowsOnPage = 0;
+        maxRowsForCurrentPage = 33; // No title on this page, more room
+        doc.setFont('helvetica', 'normal'); // Reset to normal for table cells
+      }
+
+      const rowY = tableY + (currentRowsOnPage * 8);
+      doc.rect(10, rowY, pageWidth - 20, 8);
+      if (currentRowsOnPage % 2 === 1) {
+        doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
+        doc.rect(10.5, rowY + 0.5, pageWidth - 21, 7, 'F');
+      }
+
+      let deliverable = (job.deliverable || job.jobId || '-').toString().substring(0, 45);
+      if (deliverable.length === 45) deliverable += '...';
+      
+      const priority = (job.priority || '-').toString().toUpperCase();
+      const status = (job.status || '-').toString().substring(0, 15);
+      
+      let deadline = '-';
+      if (job.clientTimeline && job.clientTimeline instanceof Date && !isNaN(job.clientTimeline)) {
+        deadline = job.clientTimeline.toISOString().split('T')[0];
+      }
+
+      doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.text(deliverable, 12, rowY + 5.5);
+      
+      // Color code priority
+      if (['XXL', 'XL'].includes(priority)) doc.setTextColor(220, 38, 38);
+      else if (priority === 'L') doc.setTextColor(234, 88, 12);
+      else doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+      doc.text(priority, 95, rowY + 5.5);
+      
+      doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.text(status, 125, rowY + 5.5);
+      doc.text(deadline, 165, rowY + 5.5);
+      
+      currentRowsOnPage++;
+    });
+  }
+
+  // --- ACTIONABLE INSIGHTS (END OF BRAND SCORECARD) ---
+  if (insights.p1 || insights.p3) {
+    let finalTableY = tableY + (currentRowsOnPage * 8) + 15;
+    
+    // Check if we need a new page for insights
+    if (finalTableY > pageHeight - 40) {
+      doc.addPage();
+      doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+      doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
+      finalTableY = 20;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+    doc.text('Actionable Insights', 10, finalTableY);
+    
+    finalTableY += 6;
+    
+    const drawInsight = (label, text, y) => {
+      if (!text) return y;
+      
+      doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
+      doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+      
+      const cleanText = text.replace(/[^\x20-\x7E]/g, '');
+      const splitText = doc.splitTextToSize(`-> ${cleanText}`, pageWidth - 32);
+      const boxHeight = 8 + (splitText.length * 5);
+      
+      if (y + boxHeight > pageHeight - 15) {
+         doc.addPage();
+         doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+         doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
+         y = 20;
+      }
+
+      doc.rect(10, y, pageWidth - 20, boxHeight, 'F');
+      doc.rect(10, y, pageWidth - 20, boxHeight);
+      
+      doc.setFillColor(59, 130, 246); // blue decorative bar
+      doc.rect(11, y + 1, 1.5, boxHeight - 2, 'F');
+      
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(59, 130, 246); // blue text
+      doc.text(label.toUpperCase(), 16, y + 5.5);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+      doc.text(splitText, 16, y + 11.5);
+      
+      return y + boxHeight + 4;
+    };
+
+    finalTableY = drawInsight('JSR Calling', insights.p1, finalTableY);
+    finalTableY = drawInsight('Cross-Functional Meeting', insights.p3, finalTableY);
+  }
+
+}
+
+/**
+ * Generates and downloads a Client Health Score PDF Report
+ * @param {Object} data - Result object from calculateHealthScore
+ */
+export function generateHealthReportPDF(data) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  drawClientScorecardPage(doc, data);
+  const formattedClientName = data.clientName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const monthName = MONTH_NAMES[data.month];
+  doc.save(`${formattedClientName}_health_score_${monthName.toLowerCase()}_${data.year}.pdf`);
+}
+
+/**
+ * Generates and downloads a multi-page Category PDF Report
+ * Cover page has category average summary, followed by individual client scorecards.
+ */
+export function generateCategoryReportPDF(teamName, month, year, clientsData) {
+  if (!clientsData || clientsData.length === 0) return;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const monthName = MONTH_NAMES[month];
+
+  // Theme colors
+  const primaryColor = [15, 23, 42]; 
+  const secondaryColor = [71, 85, 105]; 
+  const borderColor = [226, 232, 240]; 
+
+  // --- COVER PAGE ---
+  doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+  doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
+
+  doc.setFillColor(30, 41, 59); // slate-800
+  doc.rect(8, 8, pageWidth - 16, 40, 'F');
+  
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(24);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`${teamName.toUpperCase()} REPORT`, 16, 24);
+  
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(14);
+  doc.setTextColor(148, 163, 184); // slate-400
+  doc.text(`${monthName} ${year}`, 16, 36);
+
+  // Calculate Averages
+  const numClients = clientsData.length;
+  let totalScore = 0;
+  let ratingCounts = { 'Excellent': 0, 'Good': 0, 'Needs Attention': 0, 'Critical': 0 };
+
+  clientsData.forEach(c => {
+    totalScore += c.scores.percentage || 0;
+    if (ratingCounts[c.rating] !== undefined) {
+      ratingCounts[c.rating]++;
+    } else {
+      ratingCounts[c.rating] = 1;
+    }
+  });
+
+  const avgScore = numClients > 0 ? Math.round(totalScore / numClients) : 0;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.text('CATEGORY SUMMARY', 16, 65);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(12);
+  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+  doc.text(`Total Brands in Category: ${numClients}`, 16, 75);
+
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
   doc.text(`Report generated by Client Health Score Dashboard on ${new Date().toLocaleDateString()}`, 10, pageHeight - 12);
-  doc.text('CONFIDENTIAL - FOR INTERNAL AGENCY USE ONLY', pageWidth - 88, pageHeight - 12);
+
+  // --- CLIENT PAGES ---
+  clientsData.forEach(clientData => {
+    doc.addPage();
+    drawClientScorecardPage(doc, clientData);
+  });
 
   // Save the PDF
-  const formattedClientName = clientName.toLowerCase().replace(/[^a-z0-9]/g, '_');
-  doc.save(`${formattedClientName}_health_score_${monthName.toLowerCase()}_${year}.pdf`);
+  const formattedTeamName = teamName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  doc.save(`${formattedTeamName}_category_report_${monthName.toLowerCase()}_${year}.pdf`);
 }

@@ -295,13 +295,18 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
   }
 
   const isPanasonicCheck = isPanasonic || (clientName || '').toLowerCase().includes('panasonic');
-  const needle = isPanasonicCheck ? 'deliverable' : 'job id';
 
-  // 1. Locate header row
-  const hIdx = findHeaderRow(rows, needle);
+  // 1. Locate header row flexibly (search for 'job id' first, then 'deliverable', 'deliverables', 'job name', 'job type', or 'brief date')
+  let hIdx = findHeaderRow(rows, 'job id');
+  if (hIdx === -1) hIdx = findHeaderRow(rows, 'deliverable');
+  if (hIdx === -1) hIdx = findHeaderRow(rows, 'deliverables');
+  if (hIdx === -1) hIdx = findHeaderRow(rows, 'job name');
+  if (hIdx === -1) hIdx = findHeaderRow(rows, 'job type');
+  if (hIdx === -1) hIdx = findHeaderRow(rows, 'brief date');
+
   if (hIdx === -1) {
     throw new Error(
-      `Job Tracker format invalid. Could not find column headers (missing "${needle.toUpperCase()}") in tab "${clientName}".`
+      `Job Tracker format invalid. Could not find column headers in tab "${clientName}".`
     );
   }
 
@@ -316,18 +321,15 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
   headers.forEach((h, idx) => {
     const txt = (h || '').toString().toLowerCase().trim();
     if (txt === 'job id' || txt === 'job_id') colMap.jobId = idx;
-    // 'deliverables' (plural) is Panasonic's column name
-    if (txt === 'deliverable' || (isPanasonicCheck && txt === 'deliverables')) colMap.deliverable = idx;
-    if (txt === 'job type')                   colMap.jobType = idx;
-    if (txt === 'status')                     colMap.status = idx;
-    if (txt === 'brief date')                 colMap.briefDate = idx;
-    // Panasonic uses 'External Timeline' for the client-facing deadline
-    if (txt === 'client timeline' || txt === 'client_timeline' || (isPanasonicCheck && txt === 'external timeline')) colMap.clientTimeline = idx;
+    if (txt === 'deliverable' || txt === 'deliverables' || txt.includes('deliverable') || txt === 'job name' || txt === 'task') colMap.deliverable = idx;
+    if (txt === 'job type' || txt.includes('job type')) colMap.jobType = idx;
+    if (txt === 'status') colMap.status = idx;
+    if (txt === 'brief date' || txt.includes('brief date')) colMap.briefDate = idx;
+    if (txt === 'client timeline' || txt === 'client_timeline' || txt === 'external timeline' || txt.includes('client timeline')) colMap.clientTimeline = idx;
     if (txt.includes('delivery date') || txt === 'delivery_date') colMap.deliveryDate = idx;
-    if (txt.includes('job closing date') || txt === 'closing_date') colMap.closingDate = idx;
-    if (txt === 'timeline status')            colMap.timelineStatus = idx;
-    // 'prority' (sic) is Panasonic's misspelled column name
-    if (txt === 'priority' || (isPanasonicCheck && txt === 'prority')) colMap.priority = idx;
+    if (txt.includes('closing date') || txt.includes('job closing date') || txt === 'closing_date') colMap.closingDate = idx;
+    if (txt === 'timeline status') colMap.timelineStatus = idx;
+    if (txt === 'priority' || txt === 'prority') colMap.priority = idx;
     if (txt === 'escalation' || txt === 'escalations' || txt === 'escalated') colMap.escalation = idx;
   });
 
@@ -336,13 +338,13 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
     const row = rows[i] || [];
     
     let jobId = '';
-    if (isPanasonicCheck) {
-      const deliverable = colMap.deliverable !== -1 ? row[colMap.deliverable] : '';
-      if (!deliverable) continue;
-      jobId = `panasonic-job-${i}`;
+    if (colMap.jobId !== -1 && row[colMap.jobId]) {
+      jobId = row[colMap.jobId];
     } else {
-      jobId = row[colMap.jobId !== -1 ? colMap.jobId : 0];
-      if (!jobId) continue;
+      const deliverable = colMap.deliverable !== -1 ? row[colMap.deliverable] : '';
+      const jobType = colMap.jobType !== -1 ? row[colMap.jobType] : '';
+      if (!deliverable && !jobType && !row[0]) continue;
+      jobId = `job-${i}`;
     }
 
     records.push({

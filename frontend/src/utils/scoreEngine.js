@@ -19,10 +19,22 @@ function isAttendeeTruthy(val) {
   return lower.length > 0;
 }
 
+export const TEAM_LEADS = {
+  B2B: { name: 'Khushi', aliases: ['khushi'] },
+  PANASONIC: { name: 'Geetika', aliases: ['geetika', 'gitika'] },
+  DEFAULT: { name: 'Deepakshi', aliases: ['deepakshi', "deepakshi ma'am", 'deepakshi maam'] }
+};
+
+export function getLeadForTeam(teamName) {
+  const upperTeam = (teamName || '').toUpperCase().trim();
+  if (TEAM_LEADS[upperTeam]) return TEAM_LEADS[upperTeam];
+  return TEAM_LEADS.DEFAULT;
+}
+
 /**
  * Client Health Score Calculator & Insight Generator
  */
-export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMonth, selectedYear) {
+export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMonth, selectedYear, teamName = 'DEFAULT') {
   const today = new Date();
   const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
@@ -86,8 +98,8 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   }
 
   // --- PARAMETER 1: JSR Calling (Max 10 pts) ---
-  const DEEPAKSHI_NAMES = ['deepakshi', 'deepakshi maam', 'deepakshi ma\'am'];
-  const isDeepakshi = (name) => DEEPAKSHI_NAMES.some(n => (name || '').toLowerCase().trim().includes('deepakshi'));
+  const teamLead = getLeadForTeam(teamName);
+  const isLead = (name) => teamLead.aliases.some(alias => (name || '').toLowerCase().trim().includes(alias));
 
   // Verification is always required — unverified rows score 0
   const isVerified = (row) => row.jsrVerified === true;
@@ -98,10 +110,10 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     return (mode === 'in person' || mode === 'in-person') && isVerified(row);
   });
 
-  const deepakshiInPerson = inPersonRows.filter(row => isDeepakshi(row.jsrNameCol)).length;
-  const otherInPerson     = inPersonRows.filter(row => !isDeepakshi(row.jsrNameCol)).length;
+  const leadInPerson = inPersonRows.filter(row => isLead(row.jsrNameCol)).length;
+  const otherInPerson = inPersonRows.filter(row => !isLead(row.jsrNameCol)).length;
 
-  const inPersonCalls  = inPersonRows.length;
+  const inPersonCalls = inPersonRows.length;
   let inPersonPoints = 0;
 
   const lowerName = (clientName || '').toLowerCase().trim();
@@ -118,16 +130,16 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   } else if (isBharti) {
     inPersonPoints = Math.min(5, inPersonCalls);
   } else {
-    let deepakshiPoints = 0;
-    if (deepakshiInPerson >= 2)       deepakshiPoints = 2;
-    else if (deepakshiInPerson === 1) deepakshiPoints = 1;
+    let leadPoints = 0;
+    if (leadInPerson >= 2)       leadPoints = 2;
+    else if (leadInPerson === 1) leadPoints = 1;
 
     let otherInPersonPoints = 0;
     if (otherInPerson >= 3)      otherInPersonPoints = 3;
     else if (otherInPerson === 2) otherInPersonPoints = 2;
     else if (otherInPerson === 1) otherInPersonPoints = 1;
 
-    inPersonPoints = Math.min(5, deepakshiPoints + otherInPersonPoints);
+    inPersonPoints = Math.min(5, leadPoints + otherInPersonPoints);
   }
 
   // On-Call Attendance % — only verified rows count (max 5 pts)
@@ -249,31 +261,58 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
 
   // Collect unique days where management attended, with who attended
   const mgmtAttendedRows = filteredDaily.filter(row => isAttendeeTruthy(row.managementAttendCol));
-  const anoopAttended    = mgmtAttendedRows.some(row => isAnoop(row.managementNameCol));
-  const seniorAttended   = mgmtAttendedRows.some(row => isSenior(row.managementNameCol));
-  const mgmtCount        = mgmtAttendedRows.length;
 
-  // Count distinct senior people (for 2+ rule)
-  const seniorPeopleSet = new Set(
-    mgmtAttendedRows
-      .map(row => (row.managementNameCol || '').toLowerCase().trim())
-      .filter(n => isSenior(n) || isAnoop(n))
-  );
+  // Track standard 3 management team members
+  const STANDARD_MGMT_MEMBERS = [
+    { name: 'Anoop Dixit', aliases: ['anoop'] },
+    { name: 'Vaibhav Mehrotra', aliases: ['vaibhav'] },
+    { name: 'Pallave Dixit', aliases: ['pallav', 'pallave', 'pallavi'] }
+  ];
 
-  let managementPoints = 0;
-  if (anoopAttended) {
-    managementPoints = 5; // Anoop alone or Anoop + anyone
-  } else if (seniorPeopleSet.size >= 2 || (mgmtCount >= 2 && seniorAttended)) {
-    managementPoints = 4; // 2+ people, no Anoop
-  } else if (seniorAttended) {
-    managementPoints = 4; // 1 senior (Vaibhav/Sabu/Pallavi), no Anoop
-  } else if (mgmtCount >= 1) {
-    managementPoints = 3; // anyone else attended
-  } else {
-    managementPoints = 0;
-  }
+  const managementMembers = STANDARD_MGMT_MEMBERS.map(m => {
+    const matchingRows = mgmtAttendedRows.filter(row => {
+      const nameCol = (row.managementNameCol || '').toString().toLowerCase().trim();
+      const rawText = (row.rawRowCells || []).join(' ').toLowerCase();
+      return m.aliases.some(a => nameCol.includes(a) || rawText.includes(a));
+    });
 
+    const attendedDays = matchingRows.length;
+    const attended = attendedDays > 0;
+
+    let daysAgoText = 'Did not join';
+    let lastAttendedDateStr = null;
+
+    if (attended && matchingRows.length > 0) {
+      // Find latest attendance date
+      const latestRow = matchingRows.reduce((latest, r) => (!latest || r.date > latest.date ? r : latest), null);
+      if (latestRow && latestRow.date) {
+        lastAttendedDateStr = latestRow.date.toISOString().split('T')[0];
+        const lastMid = new Date(latestRow.date.getFullYear(), latestRow.date.getMonth(), latestRow.date.getDate());
+        const diffMs = todayMidnight.getTime() - lastMid.getTime();
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        if (diffDays <= 0) {
+          daysAgoText = 'Joined today';
+        } else if (diffDays === 1) {
+          daysAgoText = 'Joined 1 day ago';
+        } else {
+          daysAgoText = `Joined ${diffDays} days ago`;
+        }
+      }
+    }
+
+    return {
+      name: m.name,
+      attendedDays,
+      attended,
+      daysAgoText,
+      lastAttendedDate: lastAttendedDateStr
+    };
+  });
+
+  // RULE: If ANY management team member joins even ONCE in a month -> Full Score (5 pts), otherwise 0 pts
   const managementAttendDays = mgmtAttendedRows.length;
+  const anyManagementJoined = managementAttendDays > 0 || managementMembers.some(m => m.attended);
+  const managementPoints = anyManagementJoined ? 5 : 0;
 
   const p3Score = creativePoints + managementPoints;
 
@@ -412,12 +451,12 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   const insights = {
     p1: generateP1Insight(isNoInPersonBrand, inPersonCalls, attendanceRate, totalWorkingDays),
     p2: generateP2Insight(p2Score, totalClosed, onTimeRate, onTimeJobs),
-    p3: generateP3Insight(creativeAttendDays, managementAttendDays, filteredDaily.length),
+    p3: generateP3Insight(creativeAttendDays, managementAttendDays, filteredDaily.length, managementMembers),
     p4: generateP4Insight(p4Score, rawScore, proactiveDetails, totalJobsCount)
   };
 
   const solutions = {
-    p1: generateP1Solution(isBharti, isNoInPersonBrand, inPersonCalls, deepakshiInPerson, otherInPerson, attendanceRate),
+    p1: generateP1Solution(isBharti, isNoInPersonBrand, inPersonCalls, leadInPerson, otherInPerson, attendanceRate, teamLead.name),
     p2: generateP2Solution(p2Score, totalClosed),
     p3: generateP3Solution(creativeAttendDays, managementAttendDays),
     p4: generateP4Solution(p4Score, proactiveDetails, totalJobsCount),
@@ -466,7 +505,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     metrics: {
       p1: { inPersonCalls, attendanceRate, totalWorkingDays },
       p2: { totalClosed, onTimeJobs, onTimeRate, jobs: p2JobDetails, priorityWarnings },
-      p3: { creativeAttendDays, managementAttendDays, totalWorkingDays: filteredDaily.length },
+      p3: { creativeAttendDays, managementAttendDays, totalWorkingDays: filteredDaily.length, managementMembers },
       p4: { rawProactiveScore, rawScore, proactiveDetails, pctApproved, pctUnapproved, totalJobsCount, jobs: p4JobDetails }
     },
     escalationCount,
@@ -511,16 +550,19 @@ function generateP1Insight(isNoInPersonBrand, inPerson, attendanceRate, workingD
   return insight;
 }
 
-function generateP1Solution(isBharti, isNoInPersonBrand, inPersonCalls, deepakshi, others, attendanceRate) {
-  const tips = [];
+function generateP1Solution(isBharti, isNoInPersonBrand, inPersonCalls, leadInPerson, others, attendanceRate, leadName) {
   if (isNoInPersonBrand) {
-    // No in-person tips
-  } else if (isBharti) {
+    if (attendanceRate < 90) return `Increase JSR on-call attendance by ${Math.ceil(90 - attendanceRate)}% to reach the 90% benchmark for full points.`;
+    return null; // Full points
+  }
+
+  const tips = [];
+  if (isBharti) {
     if (inPersonCalls < 5) {
       tips.push(`Schedule ${5 - inPersonCalls} more in-person meeting(s) to reach the 5-call threshold for full points.`);
     }
   } else {
-    if (deepakshi < 2) tips.push(`Schedule ${2 - deepakshi} more in-person meeting(s) with Deepakshi to reach the 2-call threshold.`);
+    if (leadInPerson < 2) tips.push(`Schedule ${2 - leadInPerson} more in-person meeting(s) with ${leadName} to reach the 2-call threshold.`);
     if (others < 3) tips.push(`Schedule ${3 - others} more in-person meeting(s) with other team members to reach the 3-call threshold.`);
   }
   if (attendanceRate < 90) tips.push(`Improve daily JSR call attendance from ${Math.round(attendanceRate)}% to 90%+ by setting standing calendar reminders.`);
@@ -565,19 +607,34 @@ function generateP2Solution(score, totalClosed) {
   return tips;
 }
 
-function generateP3Insight(creativeAttendDays, managementAttendDays, totalDays) {
+function generateP3Insight(creativeAttendDays, managementAttendDays, totalDays, managementMembers = []) {
   if (totalDays === 0) {
     return 'No daily data available to assess cross-functional attendance.';
   }
+  let insight = '';
   if (creativeAttendDays > 0 && managementAttendDays > 0) {
-    return `Creative attended ${creativeAttendDays} day(s) and Management attended ${managementAttendDays} day(s) on JSR calls this month.`;
+    insight = `Creative attended ${creativeAttendDays} day(s) and Management attended ${managementAttendDays} day(s) on JSR calls this month.`;
   } else if (creativeAttendDays > 0) {
-    return `Creative team attended ${creativeAttendDays} day(s). Management was absent from all calls this month.`;
+    insight = `Creative team attended ${creativeAttendDays} day(s). Management was absent from all calls this month.`;
   } else if (managementAttendDays > 0) {
-    return `Management attended ${managementAttendDays} day(s). Creative team was absent from all calls this month.`;
+    insight = `Management attended ${managementAttendDays} day(s). Creative team was absent from all calls this month.`;
   } else {
-    return 'No cross-functional attendance logged this month.';
+    insight = 'No cross-functional attendance logged this month.';
   }
+
+  const attended = managementMembers.filter(m => m.attended);
+  const absent = managementMembers.filter(m => !m.attended);
+
+  if (attended.length > 0) {
+    const joinedStr = attended.map(m => `${m.name} (${m.daysAgoText})`).join(', ');
+    insight += ` Joined: ${joinedStr}.`;
+  }
+  if (absent.length > 0) {
+    const absentStr = absent.map(m => m.name).join(', ');
+    insight += ` Did not join: ${absentStr}.`;
+  }
+
+  return insight;
 }
 
 function generateP3Solution(creativeAttendDays, managementAttendDays) {

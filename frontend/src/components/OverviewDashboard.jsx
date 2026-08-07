@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { RefreshCw, TrendingUp, TrendingDown, Minus, LayoutGrid, AlertCircle } from "lucide-react";
+import { RefreshCw, TrendingUp, TrendingDown, Minus, LayoutGrid, AlertCircle, Download } from "lucide-react";
+import { generateCategoryReportPDF } from '../utils/pdfGenerator';
 
 const RATING_META = {
   Excellent:         { color: "#10B981", bg: "rgba(16, 185, 129, 0.12)", ring: "#10B981" },
@@ -109,10 +110,27 @@ function BrandCard({ client, scoreData, loading, onView, large }) {
   );
 }
 
-export default function OverviewDashboard({ clients, loadStatus, month, year, onSelectClient, clientScores, onBatchLoad }) {
+export default function OverviewDashboard({ clients, loadStatus, month, year, onSelectClient, clientScores, onBatchLoad, activePairs }) {
   const [loadingKeys, setLoadingKeys] = useState(new Set());
   const [hasLoaded,   setHasLoaded]   = useState(false);
   const [filterRating, setFilterRating] = useState('All');
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+
+  const handleExportCategory = () => {
+    if (!selectedTeamId) return;
+    const team = activePairs?.find(p => p.id === selectedTeamId);
+    if (!team) return;
+
+    const teamClients = clients.filter(c => c.pairId === selectedTeamId);
+    const clientsData = teamClients.map(c => clientScores[`${c.key}__${month}__${year}`]).filter(Boolean);
+
+    if (clientsData.length === 0) {
+      alert("No score data loaded for this category. Please wait for them to load or click 'Refresh All'.");
+      return;
+    }
+
+    generateCategoryReportPDF(team.name || 'Category', month, year, clientsData);
+  };
 
   const triggerBatchLoad = useCallback(async () => {
     if (!clients.length) return;
@@ -210,6 +228,38 @@ export default function OverviewDashboard({ clients, loadStatus, month, year, on
         </div>
 
         <div style={{ display:"flex", gap:"0.6rem", flexWrap:"wrap", alignItems:"center" }}>
+          {activePairs && activePairs.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(0,0,0,0.03)', padding: '0.2rem 0.3rem 0.2rem 0.6rem', borderRadius: 99 }}>
+              <select
+                value={selectedTeamId}
+                onChange={(e) => setSelectedTeamId(e.target.value)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: 'var(--text-secondary)',
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="">Select Category...</option>
+                {activePairs.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <button
+                className="overview-refresh-btn"
+                onClick={handleExportCategory}
+                disabled={!selectedTeamId}
+                title="Export PDF for selected category"
+                style={{ padding: '0.35rem 0.75rem' }}
+              >
+                <Download size={14} />
+                Export
+              </button>
+            </div>
+          )}
           {avgScore != null && (
             <div className="overview-pill" style={{ "--pill-color":"#3b82f6" }}>
               <Minus size={12} /> Avg {avgScore}%

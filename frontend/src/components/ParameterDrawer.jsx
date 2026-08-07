@@ -200,7 +200,7 @@ function P2Detail({ metrics }) {
 }
 
 function P3Detail({ metrics }) {
-  const { creativeAttendDays, managementAttendDays, totalWorkingDays } = metrics.p3;
+  const { creativeAttendDays, managementAttendDays, totalWorkingDays, managementMembers = [] } = metrics.p3;
   const creativeColor = creativeAttendDays >= 3 ? '#10B981' : creativeAttendDays >= 1 ? '#F59E0B' : '#EF4444';
   const mgmtColor     = managementAttendDays >= 1 ? '#10B981' : '#EF4444';
 
@@ -227,11 +227,51 @@ function P3Detail({ metrics }) {
       <div style={{ height: 8, borderRadius: 4, background: 'rgba(255,255,255,0.07)', overflow: 'hidden', marginBottom: '0.5rem' }}>
         <div style={{ height: '100%', width: totalWorkingDays > 0 ? `${(managementAttendDays / totalWorkingDays) * 100}%` : '0%', background: mgmtColor, transition: 'width 0.6s ease', borderRadius: 4 }} />
       </div>
-      <p style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+      <p style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '0.75rem' }}>
         {managementAttendDays > 0
           ? `Management joined ${managementAttendDays} JSR call${managementAttendDays !== 1 ? 's' : ''} this month.`
           : 'Management did not attend any JSR calls this month.'}
       </p>
+
+      {managementMembers.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+          {managementMembers.map((member, idx) => (
+            <div key={idx} style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '0.65rem 0.85rem', borderRadius: 8,
+              background: member.attended ? 'rgba(16,185,129,0.06)' : 'rgba(239,68,68,0.06)',
+              border: `1px solid ${member.attended ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+            }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: member.attended ? '#10B981' : '#EF4444'
+                  }} />
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {member.name}
+                  </span>
+                </div>
+                {member.attended && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginLeft: '1rem', marginTop: '0.15rem' }}>
+                    Attended {member.attendedDays} call{member.attendedDays !== 1 ? 's' : ''} this month
+                  </div>
+                )}
+              </div>
+              <span style={{
+                fontSize: '0.78rem', fontWeight: 700,
+                padding: '0.2rem 0.5rem', borderRadius: 6,
+                background: member.attended ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+                color: member.attended ? '#10B981' : '#EF4444'
+              }}>
+                {member.attended
+                  ? (member.daysAgoText?.startsWith('Joined') ? member.daysAgoText : `Joined (${member.daysAgoText})`)
+                  : 'Did not join'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }

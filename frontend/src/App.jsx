@@ -143,7 +143,7 @@ export default function App() {
 
       const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
       const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-      const result    = calculateHealthScore(dailyRows, jobRows, label, month, year);
+      const result    = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
 
       setScoreData(result);
       setCalcStatus('idle');
@@ -179,7 +179,7 @@ export default function App() {
                               (pair && pair.name || '').toLowerCase().includes('panasonic');
           const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
           const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-          const result    = calculateHealthScore(dailyRows, jobRows, label, month, year);
+          const result    = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
           setScoreData(result);
           setCalcStatus('idle');
           const cacheKey = `${selectedClient}__${month}__${year}`;
@@ -224,7 +224,7 @@ export default function App() {
                               (pair && pair.name || '').toLowerCase().includes('panasonic');
           const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
           const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-          const result    = calculateHealthScore(dailyRows, jobRows, label, month, year);
+          const result    = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
           setClientScores(prev => ({ ...prev, [cacheKey]: { percentage: result.scores.percentage, rating: result.rating } }));
           setClientFullData(prev => ({ ...prev, [cacheKey]: result }));
         } catch (err) {
@@ -321,6 +321,7 @@ export default function App() {
             clientScores={clientFullData}
             onSelectClient={(key) => { setView('dashboard'); handleSelectClient(key); }}
             onBatchLoad={batchLoadAllClients}
+            activePairs={activePairs}
           />
         ) : (
           <>

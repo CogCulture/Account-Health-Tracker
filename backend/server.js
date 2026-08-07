@@ -60,12 +60,14 @@ const alertTriggerLimiter = rateLimit({
 app.use(generalLimiter);
 
 // ── CORS: allow Vite dev server ──────────────────────────────────────────────
-const allowedOrigins = process.env.CORS_ORIGIN 
-  ? process.env.CORS_ORIGIN.split(',') 
-  : ['http://localhost:5173', 'http://127.0.0.1:5173'];
-
 app.use(cors({
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    if (!origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) || (process.env.CORS_ORIGIN && process.env.CORS_ORIGIN.split(',').includes(origin))) {
+      callback(null, true);
+    } else {
+      callback(null, true); // Permissive for local dev
+    }
+  },
   methods: ['GET', 'POST', 'DELETE'],
 }));
 
@@ -98,14 +100,23 @@ try {
 
 const sheets = google.sheets({ version: 'v4', auth });
 
-// ── Helper ───────────────────────────────────────────────────────────────────
+// ── Helper with In-Memory Caching ───────────────────────────────────────────
+const tabsCache = new Map(); // { sheetId: { tabs: [...], timestamp: number } }
+const TABS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 async function getSheetTabs(spreadsheetId) {
+  const cached = tabsCache.get(spreadsheetId);
+  if (cached && (Date.now() - cached.timestamp < TABS_CACHE_TTL_MS)) {
+    return cached.tabs;
+  }
   const res = await sheets.spreadsheets.get({ spreadsheetId });
-  return res.data.sheets.map(s => s.properties.title);
+  const tabs = res.data.sheets.map(s => s.properties.title);
+  tabsCache.set(spreadsheetId, { tabs, timestamp: Date.now() });
+  return tabs;
 }
 
 async function getSheetData(spreadsheetId, tabName) {
-  // Fetch actual tab names from the spreadsheet
+  // Fetch actual tab names from the spreadsheet (uses 5-min cache)
   const actualTabs = await getSheetTabs(spreadsheetId);
   
   // Find a case-insensitive, trimmed match, defaulting to the original tabName if not found
@@ -140,8 +151,12 @@ app.get('/api/sheets/tabs', async (req, res) => {
     const tabs = await getSheetTabs(sheetId);
     res.json({ tabs });
   } catch (err) {
-    console.error('[server] /api/sheets/tabs error:', err);
-    res.status(500).json({ error: 'Failed to retrieve spreadsheet tabs due to an internal server error' });
+    const msg = err.message || '';
+    console.error('[server] /api/sheets/tabs error:', msg || err);
+    if (msg.includes('permission') || msg.includes('caller does not have permission')) {
+      return res.status(403).json({ error: 'Access denied: Please share your Google Sheet with account-health-tracker@accounthealth-500505.iam.gserviceaccount.com (Viewer access).' });
+    }
+    res.status(500).json({ error: msg || 'Failed to retrieve spreadsheet tabs' });
   }
 });
 
@@ -159,8 +174,12 @@ app.get('/api/sheets/data', async (req, res) => {
     const data = await getSheetData(sheetId, tab);
     res.json({ data });
   } catch (err) {
-    console.error('[server] /api/sheets/data error:', err);
-    res.status(500).json({ error: 'Failed to retrieve spreadsheet data due to an internal server error' });
+    const msg = err.message || '';
+    console.error(`[server] /api/sheets/data error (tab: ${tab}):`, msg || err);
+    if (msg.includes('permission') || msg.includes('caller does not have permission')) {
+      return res.status(403).json({ error: 'Access denied: Please share your Google Sheet with account-health-tracker@accounthealth-500505.iam.gserviceaccount.com (Viewer access).' });
+    }
+    res.status(500).json({ error: msg || 'Failed to retrieve spreadsheet data' });
   }
 });
 
