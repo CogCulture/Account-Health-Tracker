@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { X, CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-react';
+import { X } from 'lucide-react';
 
 /* ── Shared UI helpers ───────────────────────────────────────────────── */
 
@@ -35,11 +35,20 @@ function StatCard({ label, value, color, sub }) {
 /* ── Parameter detail bodies ─────────────────────────────────────────── */
 
 function P1Detail({ metrics, isNoInPersonBrand }) {
-  const { inPersonCalls, attendanceRate, totalWorkingDays } = metrics.p1;
-  const attended = Math.round((attendanceRate / 100) * totalWorkingDays);
-  const missed   = totalWorkingDays - attended;
+  const {
+    inPersonCalls,
+    clientUnavailableCount = 0,
+    attendanceRate,
+    displayAttendanceRate,
+    attendedCount,
+    totalWorkingDays
+  } = metrics.p1;
 
-  const attColor  = attendanceRate >= 75 ? '#10B981' : attendanceRate >= 50 ? '#F59E0B' : '#EF4444';
+  const attended = attendedCount !== undefined ? attendedCount : Math.round((attendanceRate / 100) * totalWorkingDays);
+  const missed   = Math.max(0, totalWorkingDays - attended);
+  const rateToDisplay = displayAttendanceRate !== undefined ? displayAttendanceRate : attendanceRate;
+
+  const attColor  = rateToDisplay >= 75 ? '#10B981' : rateToDisplay >= 50 ? '#F59E0B' : '#EF4444';
   const callColor = inPersonCalls >= 3 ? '#10B981' : inPersonCalls >= 1 ? '#F59E0B' : '#EF4444';
 
   return (
@@ -47,6 +56,7 @@ function P1Detail({ metrics, isNoInPersonBrand }) {
       <SectionTitle>This month at a glance</SectionTitle>
       <div style={{ display: 'flex', gap: '0.75rem' }}>
         {!isNoInPersonBrand && <StatCard label="In-person calls" value={inPersonCalls} color={callColor} />}
+        <StatCard label="Client unavailable" value={clientUnavailableCount} color="var(--text-secondary)" />
         <StatCard label="Working days" value={totalWorkingDays} color="var(--text-primary)" />
       </div>
 
@@ -56,18 +66,18 @@ function P1Detail({ metrics, isNoInPersonBrand }) {
         <StatCard label="Calls missed" value={missed} color={missed > 0 ? '#EF4444' : 'var(--text-muted)'} />
         <StatCard
           label="Attendance rate"
-          value={`${Math.round(attendanceRate)}%`}
+          value={`${Math.round(rateToDisplay)}%`}
           color={attColor}
         />
       </div>
 
       {/* Visual attendance bar */}
       <div style={{ height: 10, borderRadius: 5, background: 'rgba(255,255,255,0.07)', overflow: 'hidden', marginBottom: '0.5rem' }}>
-        <div style={{ height: '100%', width: `${attendanceRate}%`, background: attColor, borderRadius: 5, transition: 'width 0.6s ease' }} />
+        <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, rateToDisplay))}%`, background: attColor, borderRadius: 5, transition: 'width 0.6s ease' }} />
       </div>
       <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
         {attended > 0
-          ? `JSR attended ${attended} out of ${totalWorkingDays} scheduled calls this month.`
+          ? `JSR attended ${attended} out of ${totalWorkingDays} scheduled calls this month${clientUnavailableCount > 0 ? ` (including ${clientUnavailableCount} client unavailable)` : ''}.`
           : 'No JSR call attendance was recorded for this month.'}
         {!isNoInPersonBrand && (inPersonCalls > 0
           ? ` ${inPersonCalls} of those were in-person meetings.`
@@ -77,24 +87,82 @@ function P1Detail({ metrics, isNoInPersonBrand }) {
   );
 }
 
-function P2Detail({ metrics }) {
-  const { totalClosed, onTimeJobs, onTimeRate, jobs = [] } = metrics.p2;
-  const delayed   = totalClosed - onTimeJobs;
-  const noDate    = jobs.filter(j => j.onTime === null).length;
+function getStatusBadge(statusStr, statusAging, item = {}) {
+  const s = (statusStr || '').toString().trim();
+  const sl = s.toLowerCase();
 
-  // Build priority summary
-  const priorityMap = {};
-  jobs.forEach(j => {
-    const p = (j.priority || 'Unknown').toString().trim().toUpperCase() || 'Unknown';
-    if (!priorityMap[p]) priorityMap[p] = { total: 0, onTime: 0 };
-    priorityMap[p].total++;
-    if (j.onTime === true) priorityMap[p].onTime++;
-  });
-  const priorityOrder = ['XXL', 'XL', 'L'];
-  const sortedPriorities = [
-    ...priorityOrder.filter(p => priorityMap[p]),
-    ...Object.keys(priorityMap).filter(p => !priorityOrder.includes(p)),
-  ];
+  let bg = 'rgba(255, 255, 255, 0.08)';
+  let color = 'var(--text-secondary)';
+  let border = 'rgba(255, 255, 255, 0.15)';
+
+  if (sl === 'closed' || sl === 'completed') {
+    bg = 'rgba(16, 185, 129, 0.12)';
+    color = '#10B981';
+    border = 'rgba(16, 185, 129, 0.3)';
+  } else if (sl === 'in progress' || sl === 'in-progress' || sl === 'ongoing') {
+    bg = 'rgba(59, 130, 246, 0.12)';
+    color = '#3B82F6';
+    border = 'rgba(59, 130, 246, 0.3)';
+  } else if (sl.includes('ctr') || sl.includes('client to revert')) {
+    bg = 'rgba(245, 158, 11, 0.14)';
+    color = '#F59E0B';
+    border = 'rgba(245, 158, 11, 0.4)';
+  } else if (sl === 'on hold' || sl === 'paused') {
+    bg = 'rgba(245, 158, 11, 0.12)';
+    color = '#F59E0B';
+    border = 'rgba(245, 158, 11, 0.3)';
+  } else if (sl.includes('atr') || sl.includes('agency to revert') || sl.includes('review')) {
+    bg = 'rgba(239, 68, 68, 0.14)';
+    color = '#EF4444';
+    border = 'rgba(239, 68, 68, 0.4)';
+  }
+
+  let daysText = null;
+  if (statusAging && statusAging.daysInStatus !== undefined) {
+    daysText = `${statusAging.daysInStatus}d in ${statusAging.category}${statusAging.enteredAtFormatted ? ` (since ${statusAging.enteredAtFormatted})` : ''}`;
+  } else if (sl.includes('ctr') || sl.includes('client to revert') || sl.includes('atr') || sl.includes('agency to revert') || sl.includes('review')) {
+    const cat = (sl.includes('ctr') || sl.includes('client to revert')) ? 'CTR' : 'ATR';
+    const refDate = item?.briefDate || item?.clientTimeline || item?.deliveryDate;
+    if (refDate) {
+      const d = new Date(refDate);
+      if (!isNaN(d.getTime())) {
+        const diffDays = Math.max(0, Math.floor((new Date() - d) / (1000 * 60 * 60 * 24)));
+        const dayNum = d.getDate();
+        const monthShort = d.toLocaleString('en-US', { month: 'short' });
+        daysText = `${diffDays}d in ${cat} (since ${dayNum} ${monthShort})`;
+      }
+    }
+  }
+
+  return (
+    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.2rem' }}>
+      <span style={{
+        fontSize: '0.72rem', fontWeight: 600,
+        padding: '0.22rem 0.6rem', borderRadius: 6,
+        background: bg, color, border: `1px solid ${border}`,
+        whiteSpace: 'nowrap', display: 'inline-block'
+      }}>
+        {s || 'Pending'}
+      </span>
+      {daysText && (
+        <span style={{
+          fontSize: '0.68rem',
+          fontWeight: 600,
+          color,
+          opacity: 0.95,
+          whiteSpace: 'nowrap'
+        }}>
+          {daysText}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function P2Detail({ metrics }) {
+  const { totalClosed, onTimeJobs, jobs = [], allMonthJobs = [] } = metrics.p2;
+  const delayed = totalClosed - onTimeJobs;
+  const displayJobs = allMonthJobs.length > 0 ? allMonthJobs : jobs;
 
   return (
     <>
@@ -105,84 +173,79 @@ function P2Detail({ metrics }) {
         <StatCard label="Delayed" value={delayed} color={delayed > 0 ? '#EF4444' : 'var(--text-muted)'} />
       </div>
 
-      {noDate > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0.75rem', borderRadius: 8, background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.2)', marginBottom: '0.75rem', fontSize: '0.8rem', color: '#F97316' }}>
-          <AlertTriangle size={14} />
-          {noDate} job(s) had missing dates and could not be evaluated.
-        </div>
-      )}
-
-      {sortedPriorities.length > 0 && (
+      {displayJobs.length > 0 && (
         <>
-          <SectionTitle>On-time by priority</SectionTitle>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            {sortedPriorities.map(p => {
-              const { total, onTime } = priorityMap[p];
-              const rate = Math.round((onTime / total) * 100);
-              const color = rate >= 90 ? '#10B981' : rate >= 60 ? '#F59E0B' : '#EF4444';
-              return (
-                <div key={p} style={{
-                  padding: '0.65rem 0.9rem', borderRadius: 8,
-                  background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid var(--card-border)',
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>{p}</span>
-                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color }}>
-                      {onTime}/{total} on time
-                      <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)', marginLeft: '0.4rem' }}>({rate}%)</span>
-                    </span>
-                  </div>
-                  <div style={{ height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.07)', overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${rate}%`, background: color, borderRadius: 3, transition: 'width 0.6s ease' }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+          <SectionTitle>Deliverables List</SectionTitle>
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: '0.5rem',
+            marginBottom: '0.75rem'
+          }}>
+            {/* Table Header */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr 120px 140px',
+              padding: '0.4rem 0.8rem', fontSize: '0.72rem', fontWeight: 700,
+              color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em'
+            }}>
+              <span>Job Name (Deliverable)</span>
+              <span>Client Timeline</span>
+              <span style={{ textAlign: 'right' }}>Status</span>
+            </div>
 
-      {jobs.length > 0 && (
-        <>
-          <SectionTitle>Job-by-job breakdown</SectionTitle>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {jobs.map((job, i) => (
-              <div key={i} style={{
-                padding: '0.75rem 0.9rem', borderRadius: 8,
-                background: job.onTime === true
-                  ? 'rgba(16,185,129,0.06)'
-                  : job.onTime === false
-                  ? 'rgba(239,68,68,0.06)'
-                  : 'rgba(255,255,255,0.03)',
-                border: `1px solid ${job.onTime === true ? 'rgba(16,185,129,0.2)' : job.onTime === false ? 'rgba(239,68,68,0.2)' : 'var(--card-border)'}`,
+            {/* List Rows */}
+            {displayJobs.map((item, idx) => (
+              <div key={idx} style={{
+                display: 'grid', gridTemplateColumns: '1fr 120px 140px',
+                alignItems: 'center', padding: '0.75rem 0.85rem', borderRadius: 8,
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid var(--card-border)',
+                gap: '0.5rem'
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--text-primary)', flex: 1 }}>
-                    {job.deliverable || (job.id && !job.id.startsWith('panasonic-') ? job.id : '—')}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
+                    {item.deliverable || item.id || 'Unnamed Deliverable'}
                   </span>
-                  {job.onTime === true && <CheckCircle2 size={16} style={{ color: '#10B981', flexShrink: 0 }} />}
-                  {job.onTime === false && <XCircle size={16} style={{ color: '#EF4444', flexShrink: 0 }} />}
-                  {job.onTime === null && <Clock size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    {item.id && !item.id.startsWith('job-') && !item.id.startsWith('panasonic-') && (
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                        ID: {item.id}
+                      </span>
+                    )}
+                    {item.clientAlterations > 0 ? (
+                      <span style={{
+                        fontSize: '0.68rem',
+                        fontWeight: 600,
+                        padding: '0.12rem 0.45rem',
+                        borderRadius: 6,
+                        background: 'rgba(245, 158, 11, 0.15)',
+                        color: '#F59E0B',
+                        border: '1px solid rgba(245, 158, 11, 0.3)',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {item.clientAlterations} Client Alteration{item.clientAlterations > 1 ? 's' : ''}
+                      </span>
+                    ) : (
+                      <span style={{
+                        fontSize: '0.68rem',
+                        fontWeight: 600,
+                        padding: '0.12rem 0.45rem',
+                        borderRadius: 6,
+                        background: 'rgba(16, 185, 129, 0.12)',
+                        color: '#10B981',
+                        border: '1px solid rgba(16, 185, 129, 0.3)',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        NO CLIENT ALTERATION
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: '1.5rem', marginTop: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    Deadline: <span style={{ color: 'var(--text-secondary)' }}>{job.deadline || '—'}</span>
-                  </span>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    Delivered: <span style={{ color: job.onTime === false ? '#EF4444' : 'var(--text-secondary)' }}>{job.actual || '—'}</span>
-                  </span>
-                  {job.priority && (
-                    <span style={{
-                      fontSize: '0.7rem', fontWeight: 700,
-                      padding: '0.1rem 0.45rem', borderRadius: 4,
-                      background: 'rgba(255,255,255,0.06)',
-                      border: '1px solid var(--card-border)',
-                      color: 'var(--text-secondary)',
-                    }}>
-                      {job.priority.toString().trim().toUpperCase()}
-                    </span>
-                  )}
+
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                  {item.clientTimeline || item.deadline || '—'}
+                </span>
+
+                <div style={{ textAlign: 'right' }}>
+                  {getStatusBadge(item.status, item.statusAging, item)}
                 </div>
               </div>
             ))}
@@ -190,9 +253,9 @@ function P2Detail({ metrics }) {
         </>
       )}
 
-      {jobs.length === 0 && (
+      {displayJobs.length === 0 && (
         <p style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-          No closed/completed jobs were found for this month.
+          No deliverables were found for this month.
         </p>
       )}
     </>

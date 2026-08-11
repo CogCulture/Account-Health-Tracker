@@ -235,6 +235,11 @@ export function parseDailyTrackerRows(workbook, clientName) {
 
     // Strategy Team (name-only column)
     if (headerText.includes('strategy') || headerText.includes('stratergy')) colMap.strategyName = idx;
+
+    // Client Unavailable column
+    if (headerText.includes('client unavailable') || headerText.includes('unavailable') || headerText.includes('client not available')) {
+      colMap.clientUnavailable = idx;
+    }
   });
 
   // Extract records
@@ -273,10 +278,24 @@ export function parseDailyTrackerRows(workbook, clientName) {
     // Build raw row representation for checks
     const rowCellsStr = row.map(c => c?.toString() || '');
 
+    const clientUnavailCell = colMap.clientUnavailable !== -1 ? row[colMap.clientUnavailable] : null;
+    const clientUnavailable = (
+      (clientUnavailCell !== null && (clientUnavailCell === true || clientUnavailCell === 'TRUE' || clientUnavailCell === 'Yes' || clientUnavailCell === 1)) ||
+      (mode || '').toLowerCase().includes('client unavailable') ||
+      (mode || '').toLowerCase().includes('unavailable') ||
+      (mode || '').toLowerCase().includes('client leave') ||
+      (mode || '').toLowerCase().includes('client off') ||
+      rowCellsStr.some(c => {
+        const txt = c.toLowerCase().trim();
+        return txt === 'client unavailable' || txt === 'unavailable' || txt === 'client not available' || txt === 'client leave';
+      })
+    );
+
     records.push({
       date: dateParsed,
       mode,
       jsrCall,
+      clientUnavailable,
       creativeAttendCol: colMap.creativeAttend !== -1 ? row[colMap.creativeAttend] : null,
       managementAttendCol: colMap.managementAttend !== -1 ? row[colMap.managementAttend] : null,
       managementNameCol: colMap.managementName !== -1 ? row[colMap.managementName] : null,
@@ -339,7 +358,8 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
     deliveryDate: -1,
     closingDate: -1,
     timelineStatus: -1,
-    priority: -1
+    priority: -1,
+    clientAlteration: -1
   };
 
   headers.forEach((h, idx) => {
@@ -354,6 +374,7 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
     if (txt.includes('closing date') || txt.includes('job closing date') || txt === 'closing_date') colMap.closingDate = idx;
     if (txt === 'timeline status') colMap.timelineStatus = idx;
     if (txt === 'priority' || txt === 'prority') colMap.priority = idx;
+    if (txt.includes('client alteration') || txt.includes('client_alteration') || txt.includes('alteration') || txt.includes('client revert') || txt === 'reverts') colMap.clientAlteration = idx;
   });
 
   const records = [];
@@ -385,6 +406,26 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
     const deliveryDate = colMap.deliveryDate !== -1 ? parseExcelDate(row[colMap.deliveryDate]) : null;
     const closingDate = colMap.closingDate !== -1 ? parseExcelDate(row[colMap.closingDate]) : null;
 
+    let clientAlterations = 0;
+    if (colMap.clientAlteration !== -1 && row[colMap.clientAlteration] != null) {
+      const val = row[colMap.clientAlteration];
+      if (typeof val === 'number') {
+        clientAlterations = val;
+      } else if (typeof val === 'boolean') {
+        clientAlterations = val ? 1 : 0;
+      } else {
+        const str = val.toString().trim();
+        const num = parseInt(str, 10);
+        if (!isNaN(num)) {
+          clientAlterations = num;
+        } else if (str.toLowerCase() === 'true' || str.toLowerCase() === 'yes' || str.toLowerCase() === 'y') {
+          clientAlterations = 1;
+        } else {
+          clientAlterations = str ? 1 : 0;
+        }
+      }
+    }
+
     records.push({
       jobId,
       deliverable,
@@ -395,7 +436,8 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
       clientTimeline,
       deliveryDate,
       closingDate,
-      priority
+      priority,
+      clientAlterations
     });
   }
 

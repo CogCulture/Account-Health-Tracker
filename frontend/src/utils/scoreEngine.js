@@ -68,22 +68,20 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   // --- 2. FILTER JOB TRACKER ROWS BY SELECTED MONTH/YEAR ---
   const isPanasonicClient = (clientName || '').toLowerCase().includes('panasonic');
   const filteredJobs = jobRows.filter(row => {
-    // Determine the relevant date for filtering
-    let dateToUse = null;
-    
+    // Collect all candidate dates for this job
+    let candidateDates = [];
+
     if (row.status?.toLowerCase().trim() === 'closed' || row.status?.toLowerCase().trim() === 'completed') {
-      dateToUse = row.closingDate || row.deliveryDate || row.briefDate;
-      // For Panasonic: fall back to clientTimeline if all other dates are missing
-      if (!dateToUse && isPanasonicClient) dateToUse = row.clientTimeline;
+      candidateDates = [row.closingDate, row.deliveryDate, row.briefDate, row.clientTimeline].filter(Boolean);
     } else {
-      dateToUse = row.briefDate;
-      // For Panasonic: fall back to clientTimeline if briefDate is missing
-      if (!dateToUse && isPanasonicClient) dateToUse = row.clientTimeline;
+      // For open/pending jobs (ATR, CTR, In Progress, On Hold), check clientTimeline first, then briefDate, deliveryDate, closingDate
+      candidateDates = [row.clientTimeline, row.briefDate, row.deliveryDate, row.closingDate].filter(Boolean);
     }
-    
-    if (!dateToUse) return false;
-    
-    return dateToUse.getMonth() === selectedMonth && dateToUse.getFullYear() === selectedYear;
+
+    if (candidateDates.length === 0) return false;
+
+    // A job matches if ANY of its key dates fall within the selected month and year
+    return candidateDates.some(d => d.getMonth() === selectedMonth && d.getFullYear() === selectedYear);
   });
 
   // Debug: log proactiveness job types
@@ -146,6 +144,25 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   const totalWorkingDays = filteredDaily.length;
   const attendanceRows   = filteredDaily.filter(row => row.jsrCall && isVerified(row)).length;
 
+  const isRowClientUnavailable = (row) => {
+    if (row.clientUnavailable === true) return true;
+    const mode = (row.mode || '').toString().trim().toLowerCase();
+    if (mode.includes('client unavailable') || mode.includes('unavailable') || mode.includes('client not available') || mode.includes('client leave')) {
+      return true;
+    }
+    if (row.rawRowCells && Array.isArray(row.rawRowCells)) {
+      return row.rawRowCells.some(cell => {
+        const txt = (cell || '').toString().toLowerCase().trim();
+        return txt === 'client unavailable' || txt === 'unavailable' || txt === 'client not available' || txt === 'client leave';
+      });
+    }
+    return false;
+  };
+
+  const clientUnavailableCount = filteredDaily.filter(row => isRowClientUnavailable(row)).length;
+  const attendedCount = filteredDaily.filter(row => (row.jsrCall || isRowClientUnavailable(row)) && isVerified(row)).length;
+  const displayAttendanceRate = totalWorkingDays > 0 ? (attendedCount / totalWorkingDays) * 100 : 0;
+
   const attendanceRate = totalWorkingDays > 0 ? (attendanceRows / totalWorkingDays) * 100 : 0;
   let attendancePoints = 0;
   
@@ -177,7 +194,9 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   
   const totalClosed = closedJobs.length;
 
-  // Build per-job detail for the drawer
+  const fmtDate = d => d ? d.toISOString().split('T')[0] : null;
+
+  // Build per-job detail for the drawer (closed jobs)
   const p2JobDetails = closedJobs.map(row => {
     const deadline   = row.clientTimeline;
     const actualDate = row.deliveryDate || row.closingDate;
@@ -190,14 +209,37 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     } else {
       onTime = null;
     }
-    const fmtDate    = d => d ? d.toISOString().split('T')[0] : null;
     return {
-      id:          row.jobId,
-      deliverable: row.deliverable || row.jobId,
-      deadline:    fmtDate(deadline),
-      actual:      fmtDate(actualDate),
+      id:                row.jobId,
+      deliverable:       row.deliverable || row.jobId,
+      deadline:          fmtDate(deadline),
+      actual:            fmtDate(actualDate),
       onTime,
-      priority:    (row.priority || '').toString().trim().toUpperCase(),
+      priority:          (row.priority || '').toString().trim().toUpperCase(),
+      clientAlterations: row.clientAlterations || 0,
+    };
+  });
+
+  // All jobs in this period (both closed and in-progress/pending)
+  const allMonthJobs = filteredJobs.map(row => {
+    const deadline   = row.clientTimeline;
+    const actualDate = row.deliveryDate || row.closingDate;
+    const status     = (row.status || '').toString().trim();
+    let onTime = null;
+    if (deadline && actualDate) {
+      onTime = actualDate.getTime() <= deadline.getTime();
+    } else if (isPanasonicClient && !actualDate && (status.toLowerCase() === 'closed' || status.toLowerCase() === 'completed')) {
+      onTime = true;
+    }
+    return {
+      id:                row.jobId,
+      deliverable:       row.deliverable || row.jobId || 'Unnamed Job',
+      clientTimeline:    fmtDate(deadline),
+      actual:            fmtDate(actualDate),
+      status:            status || 'Pending',
+      onTime,
+      priority:          (row.priority || '').toString().trim().toUpperCase(),
+      clientAlterations: row.clientAlterations || 0,
     };
   });
 
@@ -503,8 +545,8 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
       escalationDeduction
     },
     metrics: {
-      p1: { inPersonCalls, attendanceRate, totalWorkingDays },
-      p2: { totalClosed, onTimeJobs, onTimeRate, jobs: p2JobDetails, priorityWarnings },
+      p1: { inPersonCalls, clientUnavailableCount, attendanceRate, displayAttendanceRate, attendedCount, totalWorkingDays },
+      p2: { totalClosed, onTimeJobs, onTimeRate, jobs: p2JobDetails, allMonthJobs, priorityWarnings },
       p3: { creativeAttendDays, managementAttendDays, totalWorkingDays: filteredDaily.length, managementMembers },
       p4: { rawProactiveScore, rawScore, proactiveDetails, pctApproved, pctUnapproved, totalJobsCount, jobs: p4JobDetails }
     },
@@ -519,6 +561,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
       escalation: row.escalation,
       clientTimeline: row.clientTimeline,
       deliveryDate: row.deliveryDate || row.closingDate,
+      clientAlterations: row.clientAlterations || 0,
     })),
     pendingLargeJobs,
     rating,

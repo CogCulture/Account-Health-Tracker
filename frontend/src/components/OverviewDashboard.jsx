@@ -260,11 +260,6 @@ export default function OverviewDashboard({ clients, loadStatus, month, year, on
               </button>
             </div>
           )}
-          {avgScore != null && (
-            <div className="overview-pill" style={{ "--pill-color":"#3b82f6" }}>
-              <Minus size={12} /> Avg {avgScore}%
-            </div>
-          )}
           <button className="overview-refresh-btn" onClick={triggerBatchLoad}
             disabled={isAnyLoading || loadStatus==="loading"} title="Reload all brand scores">
             <RefreshCw size={14} className={isAnyLoading ? "spin" : ""} />

@@ -158,6 +158,7 @@ export function parseDailyTrackerRows(rows, clientName) {
       designAttend: -1, contentName: -1, strategyName: -1,
       creativeAttend: -1,
       managementAttend: -1, managementName: -1,
+      clientUnavailable: -1,
     };
 
     for (let idx = startCol; idx <= endCol; idx++) {
@@ -170,6 +171,10 @@ export function parseDailyTrackerRows(rows, clientName) {
       const combined = colCells.join(' ');
 
       if (colCells.includes('mode')) colMap.mode = idx;
+
+      if (combined.includes('client unavailable') || combined.includes('unavailable') || combined.includes('client not available')) {
+        colMap.clientUnavailable = idx;
+      }
 
       if (colCells.some(c => c.includes('jsr call') || c === 'jsr')) {
         if (colMap.jsrCall === -1) colMap.jsrCall = idx;
@@ -259,10 +264,25 @@ export function parseDailyTrackerRows(rows, clientName) {
       const jsrCell = colMap.jsrCall !== -1 ? row[colMap.jsrCall] : false;
       const jsrCall = isAttendeeTruthy(jsrCell);
 
+      const rawCells = row.map(c => c?.toString() || '');
+      const clientUnavailCell = colMap.clientUnavailable !== -1 ? row[colMap.clientUnavailable] : null;
+      const clientUnavailable = (
+        (clientUnavailCell !== null && isAttendeeTruthy(clientUnavailCell)) ||
+        mode.toLowerCase().includes('client unavailable') ||
+        mode.toLowerCase().includes('unavailable') ||
+        mode.toLowerCase().includes('client leave') ||
+        mode.toLowerCase().includes('client off') ||
+        rawCells.some(c => {
+          const txt = c.toLowerCase().trim();
+          return txt === 'client unavailable' || txt === 'unavailable' || txt === 'client not available' || txt === 'client leave';
+        })
+      );
+
       records.push({
         date: dateParsed,
         mode,
         jsrCall,
+        clientUnavailable,
         jsrVerified:         colMap.jsrVerified      !== -1 ? isAttendeeTruthy(row[colMap.jsrVerified])  : false,
         jsrNameCol:          colMap.jsrName           !== -1 ? row[colMap.jsrName]         : null,
         creativeAttendCol:   colMap.creativeAttend   !== -1 ? row[colMap.creativeAttend]   : null,
@@ -271,7 +291,7 @@ export function parseDailyTrackerRows(rows, clientName) {
         designAttendCol:     colMap.designAttend     !== -1 ? row[colMap.designAttend]     : null,
         contentNameCol:      colMap.contentName      !== -1 ? row[colMap.contentName]      : null,
         strategyNameCol:     colMap.strategyName     !== -1 ? row[colMap.strategyName]     : null,
-        rawRowCells: row.map(c => c?.toString() || ''),
+        rawRowCells: rawCells,
       });
     });
   }
@@ -316,6 +336,7 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
     jobId: -1, deliverable: -1, jobType: -1, status: -1,
     briefDate: -1, clientTimeline: -1, deliveryDate: -1,
     closingDate: -1, timelineStatus: -1, priority: -1, escalation: -1,
+    clientAlteration: -1,
   };
 
   headers.forEach((h, idx) => {
@@ -331,6 +352,7 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
     if (txt === 'timeline status') colMap.timelineStatus = idx;
     if (txt === 'priority' || txt === 'prority') colMap.priority = idx;
     if (txt === 'escalation' || txt === 'escalations' || txt === 'escalated') colMap.escalation = idx;
+    if (txt.includes('client alteration') || txt.includes('client_alteration') || txt.includes('alteration') || txt.includes('client revert') || txt === 'reverts') colMap.clientAlteration = idx;
   });
 
   const records = [];
@@ -347,18 +369,39 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
       jobId = `job-${i}`;
     }
 
+    let clientAlterations = 0;
+    if (colMap.clientAlteration !== -1 && row[colMap.clientAlteration] != null) {
+      const val = row[colMap.clientAlteration];
+      if (typeof val === 'number') {
+        clientAlterations = val;
+      } else if (typeof val === 'boolean') {
+        clientAlterations = val ? 1 : 0;
+      } else {
+        const str = val.toString().trim();
+        const num = parseInt(str, 10);
+        if (!isNaN(num)) {
+          clientAlterations = num;
+        } else if (str.toLowerCase() === 'true' || str.toLowerCase() === 'yes' || str.toLowerCase() === 'y') {
+          clientAlterations = 1;
+        } else {
+          clientAlterations = str ? 1 : 0;
+        }
+      }
+    }
+
     records.push({
       jobId,
-      deliverable:    colMap.deliverable    !== -1 ? row[colMap.deliverable]    : '',
-      jobType:        colMap.jobType        !== -1 ? row[colMap.jobType]        : '',
-      status:         colMap.status         !== -1 ? row[colMap.status]         : '',
-      timelineStatus: colMap.timelineStatus !== -1 ? row[colMap.timelineStatus] : '',
-      briefDate:      parseExcelDate(colMap.briefDate      !== -1 ? row[colMap.briefDate]      : null),
-      clientTimeline: parseExcelDate(colMap.clientTimeline !== -1 ? row[colMap.clientTimeline] : null),
-      deliveryDate:   parseExcelDate(colMap.deliveryDate   !== -1 ? row[colMap.deliveryDate]   : null),
-      closingDate:    parseExcelDate(colMap.closingDate    !== -1 ? row[colMap.closingDate]    : null),
-      priority:       colMap.priority       !== -1 ? row[colMap.priority]       : '',
-      escalation:     colMap.escalation     !== -1 ? row[colMap.escalation]     : '',
+      deliverable:        colMap.deliverable        !== -1 ? row[colMap.deliverable]        : '',
+      jobType:            colMap.jobType            !== -1 ? row[colMap.jobType]            : '',
+      status:             colMap.status             !== -1 ? row[colMap.status]             : '',
+      timelineStatus:     colMap.timelineStatus     !== -1 ? row[colMap.timelineStatus]     : '',
+      briefDate:          parseExcelDate(colMap.briefDate      !== -1 ? row[colMap.briefDate]      : null),
+      clientTimeline:     parseExcelDate(colMap.clientTimeline !== -1 ? row[colMap.clientTimeline] : null),
+      deliveryDate:       parseExcelDate(colMap.deliveryDate   !== -1 ? row[colMap.deliveryDate]   : null),
+      closingDate:        parseExcelDate(colMap.closingDate    !== -1 ? row[colMap.closingDate]    : null),
+      priority:           colMap.priority           !== -1 ? row[colMap.priority]           : '',
+      escalation:         colMap.escalation         !== -1 ? row[colMap.escalation]         : '',
+      clientAlterations,
     });
   }
 

@@ -10,6 +10,7 @@ import { dirname, resolve } from 'path';
 import cron from 'node-cron';
 import multer from 'multer';
 import { runDailyDigestCheck } from './dailyDigestEngine.js';
+import { syncJobStatusAging } from './jobStatusTracker.js';
 import { getTeamsCollection, getMeetingInsightsCollection } from './db.js';
 import { ALLOWED_TEAM_NAMES } from './podConfig.js';
 import { transcribeAudio, extractMeetingInsights } from './mistralService.js';
@@ -299,6 +300,24 @@ app.delete('/api/teams/:id', async (req, res) => {
 });
 
 /**
+ * POST /api/job-status/sync
+ * Syncs ATR/CTR job status duration/aging records in MongoDB.
+ */
+app.post('/api/job-status/sync', express.json(), async (req, res) => {
+  const { brandName, jobs } = req.body || {};
+  if (!brandName || !Array.isArray(jobs)) {
+    return res.status(400).json({ error: 'brandName and jobs array are required.' });
+  }
+  try {
+    const updatedJobs = await syncJobStatusAging(brandName, jobs);
+    res.json({ success: true, jobs: updatedJobs });
+  } catch (err) {
+    console.error('[server] /api/job-status/sync error:', err);
+    res.status(500).json({ error: 'Failed to sync job status aging.' });
+  }
+});
+
+/**
  * GET /api/trigger-daily-digest
  * Manually triggers the 11:30 AM daily pod digest email via HTTP request.
  * Useful for calling from external free cron job pinger (e.g. cron-job.org).
@@ -445,9 +464,9 @@ app.get('/api/meetings/insights', async (_req, res) => {
 });
 
 // ── Background Cron Scheduler ──────────────────────────────────────────────
-// Scheduled daily pod digest (pending L/XL/XXL jobs + meeting attendance %) at 11:30 AM every day (IST Timezone)
-cron.schedule('30 11 * * *', () => {
-  console.log('[cron] Running scheduled daily 11:30 AM digest check...');
+// Scheduled daily pod digest (pending L/XL/XXL jobs + meeting attendance % + status aging sync) at 11:00 AM every day (IST Timezone)
+cron.schedule('0 11 * * *', () => {
+  console.log('[cron] Running scheduled daily 11:00 AM digest and status aging check...');
   runDailyDigestCheck(sheets).catch(err => {
     console.error('[cron] Scheduled daily digest check failed:', err.message);
   });

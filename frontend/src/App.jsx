@@ -13,6 +13,26 @@ import { RefreshCw, BarChart3, Settings } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
+const SCORE_CACHE_KEY = 'client_health_score_persistent_cache';
+
+const loadPersistentCache = () => {
+  try {
+    const raw = localStorage.getItem(SCORE_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    console.error('Failed to load persistent score cache:', e);
+    return {};
+  }
+};
+
+const savePersistentCache = (newCache) => {
+  try {
+    localStorage.setItem(SCORE_CACHE_KEY, JSON.stringify(newCache));
+  } catch (e) {
+    console.error('Failed to save persistent score cache:', e);
+  }
+};
+
 export default function App() {
   const [activePairs, setActivePairs] = useState([]);
 
@@ -30,10 +50,31 @@ export default function App() {
   const [calcStatus,   setCalcStatus]   = useState('idle'); // idle | loading | error
   const [calcError,    setCalcError]    = useState('');
 
+  // Full result cache for overview cards & trend graphs (persisted in localStorage)
+  const [clientFullData, setClientFullData] = useState(() => loadPersistentCache());
   // Cache: { "ClientName__month__year": { percentage, rating } }
-  const [clientScores, setClientScores] = useState({});
-  // Full result cache for overview cards
-  const [clientFullData, setClientFullData] = useState({});
+  const [clientScores, setClientScores] = useState(() => {
+    const initialFull = loadPersistentCache();
+    const scoresMap = {};
+    Object.entries(initialFull).forEach(([k, v]) => {
+      if (v && v.scores) {
+        scoresMap[k] = { percentage: v.scores.percentage, rating: v.rating };
+      }
+    });
+    return scoresMap;
+  });
+
+  const updateFullDataCache = useCallback((key, data) => {
+    setClientFullData(prev => {
+      const next = { ...prev, [key]: data };
+      savePersistentCache(next);
+      return next;
+    });
+    setClientScores(prev => ({
+      ...prev,
+      [key]: { percentage: data.scores.percentage, rating: data.rating }
+    }));
+  }, []);
 
   // Lifted client loading states
   const [clients, setClients]       = useState([]);
@@ -105,6 +146,28 @@ export default function App() {
     loadClients();
   }, [loadClients]);
 
+  const syncStatusAging = useCallback(async (label, result) => {
+    if (!result || !result.metrics || !result.metrics.p2 || !Array.isArray(result.metrics.p2.jobs)) {
+      return result;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/job-status/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brandName: label, jobs: result.metrics.p2.jobs }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.jobs)) {
+          result.metrics.p2.jobs = data.jobs;
+        }
+      }
+    } catch (err) {
+      console.warn('[statusSync] Failed to sync status aging:', err);
+    }
+    return result;
+  }, []);
+
   // ── Select a client → fetch + calculate ───────────────────────────────────
   const handleSelectClient = useCallback(async (clientKey) => {
     setSelectedClient(clientKey);
@@ -123,6 +186,41 @@ export default function App() {
     if (clientFullData[cacheKey]) {
       setScoreData(clientFullData[cacheKey]);
       setCalcStatus('idle');
+
+      // Check if previous months are missing and fetch background rows to populate trend graph
+      const missingPrev = [];
+      for (let offset = -2; offset <= -1; offset++) {
+        let pm = month + offset;
+        let py = year;
+        if (pm < 0) { pm += 12; py -= 1; }
+        const pKey = `${clientKey}__${pm}__${py}`;
+        if (!clientFullData[pKey]) missingPrev.push({ pm, py, pKey });
+      }
+
+      if (missingPrev.length > 0) {
+        (async () => {
+          try {
+            const [dailyRaw, jobRaw] = await Promise.all([
+              fetchSheetData(dailyId, tabName),
+              fetchSheetData(jobId, tabName),
+            ]);
+            const pair = activePairs.find(p => p.id === clientEntry.pairId);
+            const isPanasonic = (tabName || '').toLowerCase().includes('panasonic') ||
+                                (label || '').toLowerCase().includes('panasonic') ||
+                                (pair && pair.name || '').toLowerCase().includes('panasonic');
+            const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
+            const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
+
+            for (const item of missingPrev) {
+              let pResult = calculateHealthScore(dailyRows, jobRows, label, item.pm, item.py, pair?.name);
+              pResult     = await syncStatusAging(label, pResult);
+              updateFullDataCache(item.pKey, pResult);
+            }
+          } catch (e) {
+            console.warn('[trendAutoCalc] Failed to preload missing months on cache hit:', e);
+          }
+        })();
+      }
       return;
     }
 
@@ -143,23 +241,39 @@ export default function App() {
 
       const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
       const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-      const result    = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
+      let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
+      result          = await syncStatusAging(label, result);
 
       setScoreData(result);
       setCalcStatus('idle');
+      updateFullDataCache(cacheKey, result);
 
-      setClientScores(prev => ({
-        ...prev,
-        [cacheKey]: { percentage: result.scores.percentage, rating: result.rating },
-      }));
-      setClientFullData(prev => ({ ...prev, [cacheKey]: result }));
+      // ── Auto-calculate previous 2 months so trend chart populates immediately ──
+      for (let offset = -2; offset <= -1; offset++) {
+        let pm = month + offset;
+        let py = year;
+        if (pm < 0) {
+          pm += 12;
+          py -= 1;
+        }
+        const pCacheKey = `${clientKey}__${pm}__${py}`;
+        if (!clientFullData[pCacheKey]) {
+          try {
+            let pResult = calculateHealthScore(dailyRows, jobRows, label, pm, py, pair?.name);
+            pResult = await syncStatusAging(label, pResult);
+            updateFullDataCache(pCacheKey, pResult);
+          } catch (e) {
+            console.warn(`[trendAutoCalc] Failed for month ${pm}:`, e);
+          }
+        }
+      }
     } catch (err) {
       setCalcStatus('error');
       setCalcError(err.message);
       setErrorMsg(err.message);
       setIsErrorOpen(true);
     }
-  }, [month, year, clients, clientFullData, activePairs]);
+  }, [month, year, clients, clientFullData, activePairs, updateFullDataCache, syncStatusAging]);
 
   const handleReload = useCallback(async () => {
     setCalcStatus('loading');
@@ -179,12 +293,12 @@ export default function App() {
                               (pair && pair.name || '').toLowerCase().includes('panasonic');
           const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
           const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-          const result    = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
+          let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
+          result          = await syncStatusAging(label, result);
           setScoreData(result);
           setCalcStatus('idle');
           const cacheKey = `${selectedClient}__${month}__${year}`;
-          setClientScores(prev => ({ ...prev, [cacheKey]: { percentage: result.scores.percentage, rating: result.rating } }));
-          setClientFullData(prev => ({ ...prev, [cacheKey]: result }));
+          updateFullDataCache(cacheKey, result);
         } catch (err) {
           setCalcStatus('error');
           setCalcError(err.message);
@@ -196,7 +310,7 @@ export default function App() {
       setCalcStatus('idle');
     }
     await clientsPromise;
-  }, [selectedClient, clients, loadClients, month, year, activePairs]);
+  }, [selectedClient, clients, loadClients, month, year, activePairs, updateFullDataCache, syncStatusAging]);
 
   // ── Batch-load all clients for Overview Dashboard ────────────────────────
   const batchLoadAllClients = useCallback(async (clientList, onClientDone) => {
@@ -224,9 +338,9 @@ export default function App() {
                               (pair && pair.name || '').toLowerCase().includes('panasonic');
           const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
           const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-          const result    = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
-          setClientScores(prev => ({ ...prev, [cacheKey]: { percentage: result.scores.percentage, rating: result.rating } }));
-          setClientFullData(prev => ({ ...prev, [cacheKey]: result }));
+          let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
+          result          = await syncStatusAging(label, result);
+          updateFullDataCache(cacheKey, result);
         } catch (err) {
           console.error(`[batchLoad] Failed for ${label}:`, err);
         } finally {
@@ -342,6 +456,7 @@ export default function App() {
               <div style={{ padding: '2rem', overflowY: 'auto', height: '100%' }}>
                 <ScoreScreen
                   scoreData={scoreData}
+                  allClientScores={clientFullData}
                   onReset={() => { setScoreData(null); setSelectedClient(null); setView('overview'); }}
                   onSaveSuccess={() => window.dispatchEvent(new Event('storage'))}
                   onReload={handleReload}

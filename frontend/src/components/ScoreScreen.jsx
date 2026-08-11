@@ -9,7 +9,7 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReload }) {
+export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, onSaveSuccess, onReload }) {
   const { clientName, month, year, scores, metrics, rating, badgeColor, badgeText, ratingBand, insights, solutions, escalationCount, pendingLargeJobs } = scoreData;
   const monthName = MONTH_NAMES[month];
 
@@ -290,84 +290,151 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
       });
     }
 
-    // ── 3. DELAY VS ON TIME CHART (Pie) ──
+    // ── 3. PERFORMANCE TREND CHART (Sharp 3-Month Window Line Chart) ──
     if (delayCanvasRef.current) {
-      const closedJobs = jobs.filter(row => {
-        const status = (row.status || '').toString().trim().toLowerCase();
-        return status === 'closed' || status === 'completed';
-      });
+      const curClientNorm = (clientName || '').split('(')[0].toLowerCase().trim();
 
-      let onTime = 0;
-      let delayed = 0;
-      let unEvaluated = 0;
+      const isMatch = (nameStr) => {
+        if (!nameStr) return false;
+        const norm = nameStr.split('(')[0].toLowerCase().trim();
+        return norm === curClientNorm || curClientNorm.includes(norm) || norm.includes(curClientNorm);
+      };
 
-      closedJobs.forEach(row => {
-        const deadline = row.clientTimeline ? new Date(row.clientTimeline) : null;
-        const actualDate = row.deliveryDate ? new Date(row.deliveryDate) : null;
-        if (deadline && actualDate) {
-          if (actualDate.getTime() <= deadline.getTime()) onTime++;
-          else delayed++;
-        } else {
-          unEvaluated++;
+      // Determine the exact 3-month window: [2 months prior, 1 month prior, active month]
+      const windowMonths = [];
+      for (let offset = -2; offset <= 0; offset++) {
+        let m = month + offset;
+        let y = year;
+        if (m < 0) {
+          m += 12;
+          y -= 1;
+        }
+        windowMonths.push({ month: m, year: y, key: `${y}-${String(m).padStart(2, '0')}` });
+      }
+
+      // Collect available real calculated scores for this client
+      const availableScoresMap = new Map();
+
+      // a) From allClientScores (persisted & in-memory loaded scores across months)
+      if (allClientScores && typeof allClientScores === 'object') {
+        Object.entries(allClientScores).forEach(([k, entry]) => {
+          if (entry && (isMatch(entry.clientName) || isMatch(k))) {
+            const m = entry.month;
+            const y = entry.year;
+            const pct = entry.scores?.percentage ?? (entry.scores?.total != null ? Math.round((entry.scores.total / 40) * 100) : null);
+            if (m !== undefined && y !== undefined && pct !== null) {
+              const key = `${y}-${String(m).padStart(2, '0')}`;
+              availableScoresMap.set(key, pct);
+            }
+          }
+        });
+      }
+
+      // b) From localStorage history
+      try {
+        const rawHistory = localStorage.getItem('client_health_dashboard_history');
+        if (rawHistory) {
+          const historyList = JSON.parse(rawHistory);
+          historyList.forEach(entry => {
+            if (entry && isMatch(entry.clientName)) {
+              const m = entry.month;
+              const y = entry.year;
+              const pct = entry.scores?.percentage ?? (entry.scores?.total != null ? Math.round((entry.scores.total / 40) * 100) : null);
+              if (m !== undefined && y !== undefined && pct !== null) {
+                const key = `${y}-${String(m).padStart(2, '0')}`;
+                if (!availableScoresMap.has(key)) {
+                  availableScoresMap.set(key, pct);
+                }
+              }
+            }
+          });
+        }
+      } catch (e) {
+        console.error('Failed to parse history for trend chart', e);
+      }
+
+      // c) Ensure current active scoreData is included
+      if (month !== undefined && year !== undefined && percentage !== null) {
+        const key = `${year}-${String(month).padStart(2, '0')}`;
+        availableScoresMap.set(key, percentage);
+      }
+
+      // Filter ONLY the target 3 months in chronological order
+      const monthLabels = [];
+      const scoreTrendData = [];
+
+      windowMonths.forEach(wm => {
+        if (availableScoresMap.has(wm.key)) {
+          const mName = MONTH_NAMES[wm.month] ? MONTH_NAMES[wm.month].substring(0, 3) : `M${wm.month + 1}`;
+          monthLabels.push(`${mName} '${String(wm.year).slice(-2)}`);
+          scoreTrendData.push(availableScoresMap.get(wm.key));
         }
       });
-
-      const labels = [];
-      const dataPoints = [];
-      const colors = [];
-
-      if (onTime > 0) {
-        labels.push(`On-Time (${onTime})`);
-        dataPoints.push(onTime);
-        colors.push('#eab308'); // gold
-      }
-      if (delayed > 0) {
-        labels.push(`Delayed (${delayed})`);
-        dataPoints.push(delayed);
-        colors.push('#0f766e'); // dark teal
-      }
-      if (unEvaluated > 0) {
-        labels.push(`No Date (${unEvaluated})`);
-        dataPoints.push(unEvaluated);
-        colors.push('#64748b'); // grey
-      }
-
-      if (closedJobs.length === 0) {
-        labels.push('No Closed Jobs');
-        dataPoints.push(1);
-        colors.push('rgba(255,255,255,0.05)');
-      }
 
       if (delayChartInstanceRef.current) {
         delayChartInstanceRef.current.destroy();
       }
 
       const ctx = delayCanvasRef.current.getContext('2d');
+      
+      const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+      gradient.addColorStop(0, 'rgba(59, 130, 246, 0.3)');
+      gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+
       delayChartInstanceRef.current = new Chart(ctx, {
-        type: 'pie',
+        type: 'line',
         data: {
-          labels: labels,
+          labels: monthLabels,
           datasets: [{
-            data: dataPoints,
-            backgroundColor: colors,
-            borderWidth: 1,
-            borderColor: isDark ? '#090d16' : '#ffffff',
+            label: 'Health Score',
+            data: scoreTrendData,
+            borderColor: '#3b82f6',
+            borderWidth: 3,
+            fill: true,
+            backgroundColor: gradient,
+            tension: 0, // Sharp line segments, no wavy curves
+            pointBackgroundColor: '#60a5fa',
+            pointBorderColor: isDark ? '#090d16' : '#ffffff',
+            pointBorderWidth: 2,
+            pointRadius: scoreTrendData.length === 1 ? 7 : 5,
+            pointHoverRadius: 8,
           }]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: {
-              position: 'bottom',
-              labels: {
-                color: textColor,
-                font: { family: 'Outfit', size: 11 },
-                boxWidth: 10,
-                padding: 8
+            legend: { display: false },
+            tooltip: {
+              mode: 'index',
+              intersect: false,
+              backgroundColor: isDark ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+              titleColor: isDark ? '#f8fafc' : '#0f172a',
+              bodyColor: isDark ? '#cbd5e1' : '#334155',
+              borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)',
+              borderWidth: 1,
+              padding: 10,
+              displayColors: false,
+              callbacks: {
+                label: (tooltipItem) => ` Performance: ${tooltipItem.parsed.y}%`
               }
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: gridColor, drawBorder: false },
+              ticks: { color: textColor, font: { family: 'Outfit', size: 10, weight: '500' } }
             },
-            tooltip: { enabled: true }
+            y: {
+              min: 0,
+              max: 100,
+              grid: { color: gridColor, drawBorder: false },
+              ticks: {
+                color: textColor,
+                font: { family: 'Outfit', size: 10, weight: '500' },
+                callback: (val) => `${val}%`
+              }
+            }
           }
         }
       });
@@ -378,7 +445,7 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
       if (priorityChartInstanceRef.current) priorityChartInstanceRef.current.destroy();
       if (delayChartInstanceRef.current) delayChartInstanceRef.current.destroy();
     };
-  }, [scoreData]);
+  }, [scoreData, allClientScores]);
 
   // Clickable parameter card
   const ParamCard = ({ id, title, sub, score }) => {
@@ -387,7 +454,11 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
       if (!isNoInPersonBrand) {
         statPills.push({ label: 'In-person calls', value: metrics.p1.inPersonCalls });
       }
-      statPills.push({ label: 'On-call attendance', value: `${Math.round(metrics.p1.attendanceRate)}%` });
+      if (metrics.p1.clientUnavailableCount > 0) {
+        statPills.push({ label: 'Client unavailable', value: metrics.p1.clientUnavailableCount });
+      }
+      const displayRate = metrics.p1.displayAttendanceRate ?? metrics.p1.attendanceRate;
+      statPills.push({ label: 'On-call attendance', value: `${Math.round(displayRate)}%` });
     }
     if (id === 'p3') {
       statPills.push({ label: 'Creative meetings', value: metrics.p3.creativeAttendDays });
@@ -712,10 +783,13 @@ export default function ScoreScreen({ scoreData, onReset, onSaveSuccess, onReloa
           </div>
         </div>
 
-        {/* Delay vs On Time Card */}
+        {/* Performance Trend Card */}
         <div className="chart-card">
-          <div className="chart-card-header">
-            <h3>Delay V/S On Time</h3>
+          <div className="chart-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3>Performance Trend</h3>
+            <span style={{ fontSize: '0.68rem', fontWeight: 600, color: '#3b82f6', background: 'rgba(59,130,246,0.12)', padding: '0.15rem 0.5rem', borderRadius: 6 }}>
+              Monthly Trajectory
+            </span>
           </div>
           <div className="chart-card-body">
             <canvas ref={delayCanvasRef} />

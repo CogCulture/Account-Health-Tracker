@@ -2,6 +2,7 @@ import { parseJobTrackerRows, parseDailyTrackerRows, getCommonClientTabs } from 
 import { sendPodDigestEmail } from './emailService.js';
 import { getTeamsCollection } from './db.js';
 import { POD_RECIPIENTS } from './podConfig.js';
+import { syncJobStatusAging } from './jobStatusTracker.js';
 
 // Standalone sheets API helpers (mirrors alertEngine.js)
 async function callWithRetry(fn, retries = 5, delay = 3000) {
@@ -143,6 +144,11 @@ export async function runDailyDigestCheck(sheets, overrideEmail = null) {
           ]);
 
           const jobs = parseJobTrackerRows(rawJobs, clientName, isPanasonic);
+          try {
+            await syncJobStatusAging(clientName, jobs);
+          } catch (e) {
+            console.warn('[dailyDigest] Status aging sync failed:', e);
+          }
           const pendingJobs = [];
 
           for (const job of jobs) {
