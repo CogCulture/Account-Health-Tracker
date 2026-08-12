@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { RefreshCw, TrendingUp, TrendingDown, Minus, LayoutGrid, AlertCircle, Download } from "lucide-react";
 import { generateCategoryReportPDF } from '../utils/pdfGenerator';
+import { isProjectBrand } from '../utils/brandTypes';
 
 const RATING_META = {
   Excellent:         { color: "#10B981", bg: "rgba(16, 185, 129, 0.12)", ring: "#10B981" },
@@ -114,6 +115,7 @@ export default function OverviewDashboard({ clients, loadStatus, month, year, on
   const [loadingKeys, setLoadingKeys] = useState(new Set());
   const [hasLoaded,   setHasLoaded]   = useState(false);
   const [filterRating, setFilterRating] = useState('All');
+  const [typeFilter, setTypeFilter] = useState('ALL');
   const [selectedTeamId, setSelectedTeamId] = useState('');
 
   const handleExportCategory = () => {
@@ -132,11 +134,10 @@ export default function OverviewDashboard({ clients, loadStatus, month, year, on
     generateCategoryReportPDF(team.name || 'Category', month, year, clientsData);
   };
 
-  const triggerBatchLoad = useCallback(async () => {
-    if (!clients.length) return;
-    setLoadingKeys(new Set(clients.map(c => c.key)));
-    setHasLoaded(false);
-    await onBatchLoad(clients, (key) => {
+  const triggerBatchLoad = useCallback(() => {
+    const keys = new Set(clients.map(c => c.key));
+    setLoadingKeys(keys);
+    onBatchLoad(clients, (key) => {
       setLoadingKeys(prev => { const n = new Set(prev); n.delete(key); return n; });
     });
     setHasLoaded(true);
@@ -158,9 +159,6 @@ export default function OverviewDashboard({ clients, loadStatus, month, year, on
   const needsAttn    = loadedScores.filter(c => clientScores[`${c.key}__${month}__${year}`]?.rating === "Needs Attention").length;
   const critical     = loadedScores.filter(c => clientScores[`${c.key}__${month}__${year}`]?.rating === "Critical").length;
 
-  const avgScore     = loadedScores.length
-    ? Math.round(loadedScores.reduce((s,c) => s + (clientScores[`${c.key}__${month}__${year}`]?.scores?.percentage || 0), 0) / loadedScores.length)
-    : null;
   const isAnyLoading = loadingKeys.size > 0;
 
   const ratingFilters = [
@@ -172,6 +170,10 @@ export default function OverviewDashboard({ clients, loadStatus, month, year, on
   ];
 
   const filteredClients = clients.filter(c => {
+    const isProj = isProjectBrand(c.label);
+    if (typeFilter === 'PROJECTS' && !isProj) return false;
+    if (typeFilter === 'RETAINERS' && isProj) return false;
+
     if (filterRating === 'All') return true;
     const scoreEntry = clientScores[`${c.key}__${month}__${year}`];
     return scoreEntry?.rating === filterRating;
@@ -185,45 +187,69 @@ export default function OverviewDashboard({ clients, loadStatus, month, year, on
             <LayoutGrid size={22} style={{ color:"var(--accent-primary)" }} />
             All Brands
           </h1>
-          <p style={{ margin:"0.2rem 0 0.75rem", fontSize:"0.82rem", color:"var(--text-muted)" }}>
-            {clients.length} brand{clients.length!==1?"s":""} across all teams
-          </p>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
+            {/* Type Filter Pills (All / Projects / Retainers) */}
+            <div style={{ display: "inline-flex", gap: "0.2rem", background: "rgba(0,0,0,0.04)", padding: "3px", borderRadius: 99, border: "1px solid var(--card-border)" }}>
+              <button
+                onClick={() => setTypeFilter('ALL')}
+                style={{
+                  fontSize: "0.72rem", fontWeight: 700, padding: "0.25rem 0.65rem", borderRadius: 99,
+                  background: typeFilter === 'ALL' ? "var(--accent-primary)" : "transparent",
+                  color: typeFilter === 'ALL' ? "#ffffff" : "var(--text-secondary)", border: "none", cursor: "pointer"
+                }}>All Brands</button>
+              <button
+                onClick={() => setTypeFilter('PROJECTS')}
+                style={{
+                  fontSize: "0.72rem", fontWeight: 700, padding: "0.25rem 0.65rem", borderRadius: 99,
+                  background: typeFilter === 'PROJECTS' ? "#0284c7" : "transparent",
+                  color: typeFilter === 'PROJECTS' ? "#ffffff" : "var(--text-secondary)", border: "none", cursor: "pointer"
+                }}>Projects</button>
+              <button
+                onClick={() => setTypeFilter('RETAINERS')}
+                style={{
+                  fontSize: "0.72rem", fontWeight: 700, padding: "0.25rem 0.65rem", borderRadius: 99,
+                  background: typeFilter === 'RETAINERS' ? "#7c3aed" : "transparent",
+                  color: typeFilter === 'RETAINERS' ? "#ffffff" : "var(--text-secondary)", border: "none", cursor: "pointer"
+                }}>Retainers</button>
+            </div>
 
-          <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-            {ratingFilters.map(f => {
-              const isActive = filterRating === f.value;
-              return (
-                <button
-                  key={f.value}
-                  onClick={() => setFilterRating(f.value)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.4rem",
-                    fontSize: "0.72rem",
-                    fontWeight: 600,
-                    padding: "0.35rem 0.75rem",
-                    borderRadius: 99,
-                    background: isActive ? f.bgColor : "rgba(0,0,0,0.035)",
-                    color: isActive ? "#ffffff" : "var(--text-secondary)",
-                    border: isActive ? `1px solid ${f.bgColor}` : "1px solid var(--card-border)",
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                  }}
-                >
-                  <span>{f.label}</span>
-                  <span style={{
-                    fontSize: "0.65rem",
-                    background: isActive ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.06)",
-                    color: isActive ? "#ffffff" : "var(--text-muted)",
-                    padding: "1px 6px",
-                    borderRadius: 99,
-                  }}>
-                    {f.count}
-                  </span>
-                </button>
-              );
-            })}
+            {/* Rating Filter Pills */}
+            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+              {ratingFilters.map(f => {
+                const isActive = filterRating === f.value;
+                return (
+                  <button
+                    key={f.value}
+                    onClick={() => setFilterRating(f.value)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.4rem",
+                      fontSize: "0.72rem",
+                      fontWeight: 600,
+                      padding: "0.35rem 0.75rem",
+                      borderRadius: 99,
+                      background: isActive ? f.bgColor : "rgba(0,0,0,0.035)",
+                      color: isActive ? "#ffffff" : "var(--text-secondary)",
+                      border: isActive ? `1px solid ${f.bgColor}` : "1px solid var(--card-border)",
+                      cursor: "pointer",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    <span>{f.label}</span>
+                    <span style={{
+                      fontSize: "0.65rem",
+                      background: isActive ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.06)",
+                      color: isActive ? "#ffffff" : "var(--text-muted)",
+                      padding: "1px 6px",
+                      borderRadius: 99,
+                    }}>
+                      {f.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 

@@ -409,6 +409,7 @@ export default function App() {
         onSelectClient={handleSelectClient}
         clientScores={clientScores}
         clients={clients}
+        activePairs={activePairs}
         loadStatus={loadStatus}
         onLoadClients={loadClients}
         activeView={view}
