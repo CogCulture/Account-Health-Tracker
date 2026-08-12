@@ -162,7 +162,7 @@ export default function ClientSidebar({
 
           {/* ── Type Filter Dropdown (All Brands / Projects / Retainers) ── */}
           <div style={{ padding: '0.3rem 0.75rem 0.6rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid var(--card-border, rgba(255, 255, 255, 0.1))', borderRadius: 8, padding: '0.2rem 0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'var(--card-bg, #ffffff)', border: '1px solid var(--card-border, rgba(0, 0, 0, 0.12))', borderRadius: 8, padding: '0.2rem 0.5rem' }}>
               <Filter size={12} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
               <select
                 style={{
@@ -170,7 +170,7 @@ export default function ClientSidebar({
                   fontWeight: 600,
                   width: '100%',
                   background: 'transparent',
-                  color: 'var(--text-primary, #f8fafc)',
+                  color: 'var(--text-primary, #0f172a)',
                   border: 'none',
                   outline: 'none',
                   cursor: 'pointer',
@@ -179,9 +179,9 @@ export default function ClientSidebar({
                 value={typeFilter}
                 onChange={e => setTypeFilter(e.target.value)}
               >
-                <option value="ALL" style={{ background: '#0f172a', color: '#f8fafc' }}>All Brands</option>
-                <option value="PROJECTS" style={{ background: '#0f172a', color: '#38bdf8' }}>Projects</option>
-                <option value="RETAINERS" style={{ background: '#0f172a', color: '#a78bfa' }}>Retainers</option>
+                <option value="ALL" style={{ background: '#ffffff', color: '#0f172a' }}>All Brands</option>
+                <option value="PROJECTS" style={{ background: '#ffffff', color: '#0284c7' }}>Projects</option>
+                <option value="RETAINERS" style={{ background: '#ffffff', color: '#6d28d9' }}>Retainers</option>
               </select>
             </div>
           </div>
