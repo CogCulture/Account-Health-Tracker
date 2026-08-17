@@ -36,13 +36,69 @@ async function getSheetData(sheets, spreadsheetId, tabName) {
   const matchedTab = actualTabs.find(t => t.toLowerCase().trim() === targetLowerTrimmed) || tabName;
   const safeRange = `'${matchedTab.replace(/'/g, "''")}'`;
 
-  const res = await callWithRetry(() => sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: safeRange,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-    dateTimeRenderOption: 'SERIAL_NUMBER',
-  }));
-  return res.data.values || [];
+  let res;
+  try {
+    res = await callWithRetry(() => sheets.spreadsheets.get({
+      spreadsheetId,
+      ranges: [safeRange],
+      includeGridData: true,
+    }));
+  } catch (err) {
+    const fallbackRes = await callWithRetry(() => sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: safeRange,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+      dateTimeRenderOption: 'SERIAL_NUMBER',
+    }));
+    return fallbackRes.data.values || [];
+  }
+
+  const sheetObj = res.data.sheets?.[0];
+  const gridData = sheetObj?.data?.[0];
+  const rowData = gridData?.rowData || [];
+
+  const visible2DArray = [];
+
+  for (let r = 0; r < rowData.length; r++) {
+    const rMeta = rowData[r];
+    if (rMeta.rowMetadata?.hiddenByFilter || rMeta.rowMetadata?.hiddenByUser) {
+      continue;
+    }
+
+    const rowValues = [];
+    const values = rMeta.values || [];
+    let hasValue = false;
+
+    for (let c = 0; c < values.length; c++) {
+      const cell = values[c] || {};
+      let cellVal = '';
+
+      if (cell.effectiveValue) {
+        if (cell.effectiveValue.numberValue !== undefined) {
+          cellVal = cell.effectiveValue.numberValue;
+        } else if (cell.effectiveValue.stringValue !== undefined) {
+          cellVal = cell.effectiveValue.stringValue;
+        } else if (cell.effectiveValue.boolValue !== undefined) {
+          cellVal = cell.effectiveValue.boolValue;
+        } else if (cell.effectiveValue.formulaValue !== undefined) {
+          cellVal = cell.effectiveValue.formulaValue;
+        }
+      } else if (cell.formattedValue !== undefined) {
+        cellVal = cell.formattedValue;
+      }
+
+      rowValues.push(cellVal);
+      if (cellVal !== '' && cellVal !== null && cellVal !== undefined) {
+        hasValue = true;
+      }
+    }
+
+    if (hasValue || rowValues.length > 0) {
+      visible2DArray.push(rowValues);
+    }
+  }
+
+  return visible2DArray;
 }
 
 function toMidnight(date) {

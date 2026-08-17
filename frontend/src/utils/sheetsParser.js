@@ -18,12 +18,23 @@ export function parseExcelDate(val) {
 
   if (typeof val === 'number') {
     const date = new Date(Math.round((val - 25569) * 86400 * 1000));
-    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    return new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  }
+
+  const str = val.toString().trim();
+
+  // Explicitly check for DD/MM/YYYY or DD-MM-YYYY format
+  const ddmmyyyyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (ddmmyyyyMatch) {
+    const day = parseInt(ddmmyyyyMatch[1], 10);
+    const month = parseInt(ddmmyyyyMatch[2], 10) - 1; // 0-indexed month
+    const year = parseInt(ddmmyyyyMatch[3], 10);
+    return new Date(year, month, day);
   }
 
   const parsed = new Date(val);
   if (isNaN(parsed.getTime())) return null;
-  return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

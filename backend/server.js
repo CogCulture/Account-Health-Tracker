@@ -118,7 +118,7 @@ async function getSheetTabs(spreadsheetId) {
 }
 
 const dataCache = new Map();
-const DATA_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes cache for raw sheet data
+const DATA_CACHE_TTL_MS = 0; // Set to 0 to ensure live sheet updates reflect immediately without waiting for cache expiration
 
 async function getSheetData(spreadsheetId, tabName) {
   const cacheKey = `${spreadsheetId}__${tabName.toLowerCase().trim()}`;
@@ -134,35 +134,88 @@ async function getSheetData(spreadsheetId, tabName) {
   const targetLowerTrimmed = tabName.toLowerCase().trim();
   const matchedTab = actualTabs.find(t => t.toLowerCase().trim() === targetLowerTrimmed) || tabName;
 
-  // Format the matched tabName as a valid A1 range by wrapping in single quotes
   const safeRange = `'${matchedTab.replace(/'/g, "''")}'`;
 
   let res;
   try {
-    res = await sheets.spreadsheets.values.get({
+    // Fetch spreadsheet with grid data to get rowMetadata (hiddenByFilter / hiddenByUser)
+    res = await sheets.spreadsheets.get({
       spreadsheetId,
-      range: safeRange,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-      dateTimeRenderOption: 'SERIAL_NUMBER',
+      ranges: [safeRange],
+      includeGridData: true,
     });
   } catch (err) {
     if (err.message && (err.message.includes('Quota exceeded') || err.message.includes('429') || err.code === 429)) {
       console.warn(`[server] Quota hit for ${tabName}. Retrying after 1.5s...`);
       await new Promise(r => setTimeout(r, 1500));
-      res = await sheets.spreadsheets.values.get({
+      res = await sheets.spreadsheets.get({
+        spreadsheetId,
+        ranges: [safeRange],
+        includeGridData: true,
+      });
+    } else {
+      // Fall back to values.get if get fails
+      const fallbackRes = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: safeRange,
         valueRenderOption: 'UNFORMATTED_VALUE',
         dateTimeRenderOption: 'SERIAL_NUMBER',
       });
-    } else {
-      throw err;
+      const data = fallbackRes.data.values || [];
+      dataCache.set(cacheKey, { data, timestamp: Date.now() });
+      return data;
     }
   }
 
-  const data = res.data.values || [];
-  dataCache.set(cacheKey, { data, timestamp: Date.now() });
-  return data;
+  const sheetObj = res.data.sheets?.[0];
+  const gridData = sheetObj?.data?.[0];
+  const rowData = gridData?.rowData || [];
+
+  const visible2DArray = [];
+
+  for (let r = 0; r < rowData.length; r++) {
+    const rMeta = rowData[r];
+
+    // Skip hidden rows (hidden by filter or manually hidden by user in Google Sheet)
+    if (rMeta.rowMetadata?.hiddenByFilter || rMeta.rowMetadata?.hiddenByUser) {
+      continue;
+    }
+
+    const rowValues = [];
+    const values = rMeta.values || [];
+    let hasValue = false;
+
+    for (let c = 0; c < values.length; c++) {
+      const cell = values[c] || {};
+      let cellVal = '';
+
+      if (cell.effectiveValue) {
+        if (cell.effectiveValue.numberValue !== undefined) {
+          cellVal = cell.effectiveValue.numberValue;
+        } else if (cell.effectiveValue.stringValue !== undefined) {
+          cellVal = cell.effectiveValue.stringValue;
+        } else if (cell.effectiveValue.boolValue !== undefined) {
+          cellVal = cell.effectiveValue.boolValue;
+        } else if (cell.effectiveValue.formulaValue !== undefined) {
+          cellVal = cell.effectiveValue.formulaValue;
+        }
+      } else if (cell.formattedValue !== undefined) {
+        cellVal = cell.formattedValue;
+      }
+
+      rowValues.push(cellVal);
+      if (cellVal !== '' && cellVal !== null && cellVal !== undefined) {
+        hasValue = true;
+      }
+    }
+
+    if (hasValue || rowValues.length > 0) {
+      visible2DArray.push(rowValues);
+    }
+  }
+
+  dataCache.set(cacheKey, { data: visible2DArray, timestamp: Date.now() });
+  return visible2DArray;
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────

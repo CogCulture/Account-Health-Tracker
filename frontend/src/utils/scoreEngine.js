@@ -68,19 +68,24 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   // --- 2. FILTER JOB TRACKER ROWS BY SELECTED MONTH/YEAR ---
   const isPanasonicClient = (clientName || '').toLowerCase().includes('panasonic');
   const filteredJobs = jobRows.filter(row => {
-    // Collect all candidate dates for this job
+    // Collect candidate dates strictly according to priority: closingDate -> deliveryDate -> clientTimeline
+    // Brief Date is completely ignored in all cases
     let candidateDates = [];
 
     if (row.status?.toLowerCase().trim() === 'closed' || row.status?.toLowerCase().trim() === 'completed') {
-      candidateDates = [row.closingDate, row.deliveryDate, row.briefDate, row.clientTimeline].filter(Boolean);
+      // If JOB CLOSING DATE or DELIVERY DATE is present, map by those; otherwise fall back to CLIENT TIMELINE
+      candidateDates = [row.closingDate, row.deliveryDate].filter(Boolean);
+      if (candidateDates.length === 0) {
+        candidateDates = [row.clientTimeline].filter(Boolean);
+      }
     } else {
-      // For open/pending jobs (ATR, CTR, In Progress, On Hold), check clientTimeline first, then briefDate, deliveryDate, closingDate
-      candidateDates = [row.clientTimeline, row.briefDate, row.deliveryDate, row.closingDate].filter(Boolean);
+      // For open/pending jobs, check clientTimeline first, then deliveryDate/closingDate
+      candidateDates = [row.clientTimeline, row.deliveryDate, row.closingDate].filter(Boolean);
     }
 
     if (candidateDates.length === 0) return false;
 
-    // A job matches if ANY of its key dates fall within the selected month and year
+    // A job matches if ANY of its valid dates fall within the selected month and year
     return candidateDates.some(d => d.getMonth() === selectedMonth && d.getFullYear() === selectedYear);
   });
 
@@ -199,10 +204,14 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   // Build per-job detail for the drawer (closed jobs)
   const p2JobDetails = closedJobs.map(row => {
     const deadline   = row.clientTimeline;
-    const actualDate = row.deliveryDate || row.closingDate;
+    // Primary actual completion date is closingDate; fallback to deliveryDate if closingDate is absent
+    const actualDate = row.closingDate || row.deliveryDate;
     let onTime;
     if (deadline && actualDate) {
       onTime = actualDate.getTime() <= deadline.getTime();
+    } else if (actualDate && !deadline) {
+      // If actual completion date exists for a closed job but no client timeline is set, mark as on-time
+      onTime = true;
     } else if (isPanasonicClient && !actualDate) {
       // Panasonic sheets lack delivery/closing date columns; if a job is closed it's considered on-time
       onTime = true;
@@ -224,11 +233,13 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   // All jobs in this period (both closed and in-progress/pending)
   const allMonthJobs = filteredJobs.map(row => {
     const deadline   = row.clientTimeline;
-    const actualDate = row.deliveryDate || row.closingDate;
+    const actualDate = row.closingDate || row.deliveryDate;
     const status     = (row.status || '').toString().trim();
     let onTime = null;
     if (deadline && actualDate) {
       onTime = actualDate.getTime() <= deadline.getTime();
+    } else if (actualDate && !deadline && (status.toLowerCase() === 'closed' || status.toLowerCase() === 'completed')) {
+      onTime = true;
     } else if (isPanasonicClient && !actualDate && (status.toLowerCase() === 'closed' || status.toLowerCase() === 'completed')) {
       onTime = true;
     }
@@ -242,7 +253,6 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
       onTime,
       priority:          (row.priority || '').toString().trim().toUpperCase(),
       clientAlterations: row.clientAlterations || 0,
-      briefDate:         fmtDate(row.briefDate),
     };
   });
 
