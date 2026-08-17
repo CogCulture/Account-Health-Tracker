@@ -56,7 +56,6 @@ function P1Detail({ metrics, isNoInPersonBrand }) {
       <SectionTitle>This month at a glance</SectionTitle>
       <div style={{ display: 'flex', gap: '0.75rem' }}>
         {!isNoInPersonBrand && <StatCard label="In-person calls" value={inPersonCalls} color={callColor} />}
-        <StatCard label="Client unavailable" value={clientUnavailableCount} color="var(--text-secondary)" />
         <StatCard label="Working days" value={totalWorkingDays} color="var(--text-primary)" />
       </div>
 
@@ -87,7 +86,7 @@ function P1Detail({ metrics, isNoInPersonBrand }) {
   );
 }
 
-function getStatusBadge(statusStr, statusAging, item = {}) {
+function getStatusBadge(statusStr, statusAging, item = {}, selectedMonth, selectedYear) {
   const s = (statusStr || '').toString().trim();
   const sl = s.toLowerCase();
 
@@ -117,16 +116,31 @@ function getStatusBadge(statusStr, statusAging, item = {}) {
     border = 'rgba(239, 68, 68, 0.4)';
   }
 
+  // Calculate cut-off date: if selected month is historical, cap evaluation at end of that month!
+  const now = new Date();
+  let evalDate = now;
+  if (selectedMonth !== undefined && selectedYear !== undefined) {
+    if (selectedYear < now.getFullYear() || (selectedYear === now.getFullYear() && selectedMonth < now.getMonth())) {
+      evalDate = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59);
+    }
+  }
+
   let daysText = null;
-  if (statusAging && statusAging.daysInStatus !== undefined) {
+  if (statusAging && statusAging.enteredAtIso) {
+    const enteredAt = new Date(statusAging.enteredAtIso);
+    if (!isNaN(enteredAt.getTime())) {
+      const diffDays = Math.max(0, Math.floor((evalDate - enteredAt) / (1000 * 60 * 60 * 24)));
+      daysText = `${diffDays}d in ${statusAging.category}${statusAging.enteredAtFormatted ? ` (since ${statusAging.enteredAtFormatted})` : ''}`;
+    }
+  } else if (statusAging && statusAging.daysInStatus !== undefined) {
     daysText = `${statusAging.daysInStatus}d in ${statusAging.category}${statusAging.enteredAtFormatted ? ` (since ${statusAging.enteredAtFormatted})` : ''}`;
   } else if (sl.includes('ctr') || sl.includes('client to revert') || sl.includes('atr') || sl.includes('agency to revert') || sl.includes('review')) {
     const cat = (sl.includes('ctr') || sl.includes('client to revert')) ? 'CTR' : 'ATR';
-    const refDate = item?.briefDate || item?.clientTimeline || item?.deliveryDate;
+    const refDate = item?.briefDate || item?.deliveryDate;
     if (refDate) {
       const d = new Date(refDate);
       if (!isNaN(d.getTime())) {
-        const diffDays = Math.max(0, Math.floor((new Date() - d) / (1000 * 60 * 60 * 24)));
+        const diffDays = Math.max(0, Math.floor((evalDate - d) / (1000 * 60 * 60 * 24)));
         const dayNum = d.getDate();
         const monthShort = d.toLocaleString('en-US', { month: 'short' });
         daysText = `${diffDays}d in ${cat} (since ${dayNum} ${monthShort})`;
@@ -159,7 +173,7 @@ function getStatusBadge(statusStr, statusAging, item = {}) {
   );
 }
 
-function P2Detail({ metrics }) {
+function P2Detail({ metrics, selectedMonth, selectedYear }) {
   const { totalClosed, onTimeJobs, jobs = [], allMonthJobs = [] } = metrics.p2;
   const delayed = totalClosed - onTimeJobs;
   const displayJobs = allMonthJobs.length > 0 ? allMonthJobs : jobs;
@@ -245,7 +259,7 @@ function P2Detail({ metrics }) {
                 </span>
 
                 <div style={{ textAlign: 'right' }}>
-                  {getStatusBadge(item.status, item.statusAging, item)}
+                  {getStatusBadge(item.status, item.statusAging, item, selectedMonth, selectedYear)}
                 </div>
               </div>
             ))}
@@ -525,7 +539,7 @@ export default function ParameterDrawer({ param, scoreData, onClose }) {
             {/* Content */}
             <div style={{ padding: '0 1.5rem 1.5rem', overflowY: 'auto', flex: 1 }}>
               {param === 'p1' && <P1Detail metrics={scoreData.metrics} isNoInPersonBrand={isNoInPersonBrand} />}
-              {param === 'p2' && <P2Detail metrics={scoreData.metrics} />}
+              {param === 'p2' && <P2Detail metrics={scoreData.metrics} selectedMonth={scoreData.selectedMonth} selectedYear={scoreData.selectedYear} />}
               {param === 'p3' && <P3Detail metrics={scoreData.metrics} />}
               {param === 'p4' && <P4Detail metrics={scoreData.metrics} />}
 

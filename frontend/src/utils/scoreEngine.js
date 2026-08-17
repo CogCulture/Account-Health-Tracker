@@ -34,7 +34,7 @@ export function getLeadForTeam(teamName) {
 /**
  * Client Health Score Calculator & Insight Generator
  */
-export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMonth, selectedYear, teamName = 'DEFAULT') {
+export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMonth, selectedYear, teamName = 'DEFAULT', assignedPersons = []) {
   const today = new Date();
   const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
@@ -212,6 +212,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     return {
       id:                row.jobId,
       deliverable:       row.deliverable || row.jobId,
+      jobType:           (row.jobType || row.deliverableType || 'Others').toString().trim() || 'Others',
       deadline:          fmtDate(deadline),
       actual:            fmtDate(actualDate),
       onTime,
@@ -234,12 +235,14 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     return {
       id:                row.jobId,
       deliverable:       row.deliverable || row.jobId || 'Unnamed Job',
+      jobType:           (row.jobType || row.deliverableType || 'Others').toString().trim() || 'Others',
       clientTimeline:    fmtDate(deadline),
       actual:            fmtDate(actualDate),
       status:            status || 'Pending',
       onTime,
       priority:          (row.priority || '').toString().trim().toUpperCase(),
       clientAlterations: row.clientAlterations || 0,
+      briefDate:         fmtDate(row.briefDate),
     };
   });
 
@@ -570,6 +573,9 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     ratingBand,
     insights,
     solutions,
+    selectedMonth,
+    selectedYear,
+    assignedPersons: assignedPersons || [],
   };
 }
 

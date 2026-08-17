@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Download, Bookmark, BookmarkCheck, ChevronRight, RefreshCw, AlertTriangle, X } from 'lucide-react';
+import { Calendar, Download, Bookmark, BookmarkCheck, ChevronRight, RefreshCw, AlertTriangle, X, UserCheck, Layers, Briefcase } from 'lucide-react';
 import Chart from 'chart.js/auto';
 import { generateHealthReportPDF } from '../utils/pdfGenerator';
 import ParameterDrawer from './ParameterDrawer';
@@ -26,6 +26,9 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
   const [isBannerDismissed, setIsBannerDismissed] = useState(false);
   const [showPendingJobsModal, setShowPendingJobsModal] = useState(false);
   const [showEscalationsModal, setShowEscalationsModal] = useState(false);
+  const [showAssignedModal, setShowAssignedModal] = useState(false);
+
+  const assignedPersons = scoreData.assignedPersons || [];
 
   useEffect(() => {
     setIsBannerDismissed(false);
@@ -454,9 +457,6 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
       if (!isNoInPersonBrand) {
         statPills.push({ label: 'In-person calls', value: metrics.p1.inPersonCalls });
       }
-      if (metrics.p1.clientUnavailableCount > 0) {
-        statPills.push({ label: 'Client unavailable', value: metrics.p1.clientUnavailableCount });
-      }
       const displayRate = metrics.p1.displayAttendanceRate ?? metrics.p1.attendanceRate;
       statPills.push({ label: 'On-call attendance', value: `${Math.round(displayRate)}%` });
     }
@@ -679,19 +679,66 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <button onClick={onReload} className="btn btn-secondary" title="Reload metrics data from source sheets">
-            <RefreshCw size={18} /> Reload
-          </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+          {/* Top row: Compact Action Buttons */}
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={onReload}
+              className="btn btn-secondary"
+              style={{ padding: '0.35rem 0.65rem', fontSize: '0.78rem', gap: '0.35rem', height: 'auto' }}
+              title="Reload metrics data from source sheets"
+            >
+              <RefreshCw size={13} /> Reload
+            </button>
+            <button
+              onClick={handleSaveToHistory}
+              className={`btn btn-secondary ${isSaved ? 'text-green' : ''}`}
+              style={{ padding: '0.35rem 0.65rem', fontSize: '0.78rem', gap: '0.35rem', height: 'auto' }}
+              disabled={isSaved}
+            >
+              {isSaved ? <><BookmarkCheck size={13} /> Saved Record</> : <><Bookmark size={13} /> Save Record</>}
+            </button>
+            <button
+              onClick={handleDownloadPDF}
+              className="btn btn-secondary"
+              style={{ padding: '0.35rem 0.65rem', fontSize: '0.78rem', gap: '0.35rem', height: 'auto' }}
+            >
+              <Download size={13} /> Export PDF Report
+            </button>
+          </div>
+
+          {/* Bottom row: Assigned Person Button */}
           <button
-            onClick={handleSaveToHistory}
-            className={`btn btn-secondary ${isSaved ? 'text-green' : ''}`}
-            disabled={isSaved}
+            onClick={() => setShowAssignedModal(true)}
+            style={{
+              width: '100%',
+              padding: '0.45rem 1rem',
+              fontSize: '0.85rem',
+              fontWeight: 700,
+              borderRadius: '8px',
+              border: '1px solid var(--card-border)',
+              background: 'rgba(255, 255, 255, 0.05)',
+              color: 'var(--text-primary)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.5rem',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.background = 'rgba(59, 130, 246, 0.12)';
+              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.4)';
+              e.currentTarget.style.color = '#3B82F6';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+              e.currentTarget.style.borderColor = 'var(--card-border)';
+              e.currentTarget.style.color = 'var(--text-primary)';
+            }}
           >
-            {isSaved ? <><BookmarkCheck size={18} /> Saved to History</> : <><Bookmark size={18} /> Save Record</>}
-          </button>
-          <button onClick={handleDownloadPDF} className="btn btn-secondary">
-            <Download size={18} /> Export PDF Report
+            <UserCheck size={15} /> Resources
           </button>
         </div>
       </div>
@@ -759,6 +806,104 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
           <ParamCard id="p3" title="Cross-Functional Meeting" sub="Creative & Management attendances" score={scores.p3} />
           <ParamCard id="p4" title="Proactiveness" sub="Initiative task index" score={scores.p4} />
         </div>
+      </div>
+
+      {/* ── Job Types Breakdown Section ─────────────────────────────────── */}
+      <div className="glass-card" style={{ marginBottom: '2.5rem', padding: '1.5rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+            <div style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', padding: '0.5rem', borderRadius: '10px', color: '#3B82F6' }}>
+              <Layers size={20} />
+            </div>
+            <div>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                DELIVERABLES THIS MONTH
+              </h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.15rem 0 0 0' }}>
+                Deliverable counts grouped by category for {monthName} {year}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{
+              fontSize: '0.8rem', fontWeight: 700,
+              padding: '0.35rem 0.85rem', borderRadius: '20px',
+              backgroundColor: 'rgba(59, 130, 246, 0.12)', color: '#3B82F6',
+              border: '1px solid rgba(59, 130, 246, 0.25)'
+            }}>
+              Total Deliverables: {(metrics?.p2?.allMonthJobs || metrics?.p2?.jobs || []).length}
+            </span>
+          </div>
+        </div>
+
+        {/* Job Type Grid */}
+        {(() => {
+          const monthJobs = metrics?.p2?.allMonthJobs || metrics?.p2?.jobs || [];
+          if (!monthJobs || monthJobs.length === 0) {
+            return (
+              <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                No deliverables recorded in JSR sheet for {monthName} {year}.
+              </div>
+            );
+          }
+
+          const countsMap = monthJobs.reduce((acc, job) => {
+            const type = (job.jobType || 'Others').trim() || 'Others';
+            acc[type] = (acc[type] || 0) + 1;
+            return acc;
+          }, {});
+
+          const sortedTypes = Object.entries(countsMap).sort((a, b) => {
+            if (a[0].toLowerCase() === 'others') return 1;
+            if (b[0].toLowerCase() === 'others') return -1;
+            return b[1] - a[1];
+          });
+
+          return (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+              gap: '0.85rem'
+            }}>
+              {sortedTypes.map(([type, count]) => {
+                const total = monthJobs.length;
+                const pct = Math.round((count / total) * 100);
+                return (
+                  <div key={type} style={{
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid var(--card-border)',
+                    borderRadius: '12px',
+                    padding: '0.85rem 1rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.35rem',
+                    transition: 'all 0.2s ease'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+                        {type}
+                      </span>
+                      <span style={{
+                        fontSize: '0.85rem', fontWeight: 800,
+                        color: '#3B82F6', background: 'rgba(59, 130, 246, 0.12)',
+                        padding: '0.15rem 0.5rem', borderRadius: '6px'
+                      }}>
+                        {count}
+                      </span>
+                    </div>
+                    <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden', marginTop: '0.2rem' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: '#3B82F6', borderRadius: '2px' }} />
+                    </div>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                      {pct}% of month deliverables
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Charts Grid Section ───────────────────────────── */}
@@ -1010,6 +1155,79 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
             </div>
           </div>
         </>
+      )}
+
+      {/* Assigned Persons Modal */}
+      {showAssignedModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 300,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0, 0, 0, 0.65)', backdropFilter: 'blur(6px)',
+          padding: '1rem'
+        }} onClick={() => setShowAssignedModal(false)}>
+          <div style={{
+            width: '100%', maxWidth: '520px', maxHeight: '85vh',
+            background: 'var(--bg-primary)', border: '1px solid var(--card-border)',
+            borderRadius: '16px', padding: '1.5rem',
+            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.6)',
+            display: 'flex', flexDirection: 'column', gap: '1.25rem'
+          }} onClick={(e) => e.stopPropagation()}>
+            
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                  <UserCheck size={18} color="#3B82F6" />
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#3B82F6', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    Account Team Allocation
+                  </span>
+                </div>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>Resources</h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                  Team members assigned to {clientName}
+                </p>
+              </div>
+              <button onClick={() => setShowAssignedModal(false)} style={{
+                background: 'var(--bg-tertiary)', border: 'none', borderRadius: 8,
+                width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', color: 'var(--text-secondary)'
+              }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', maxHeight: '360px', overflowY: 'auto' }}>
+              {assignedPersons && assignedPersons.length > 0 ? (
+                assignedPersons.map((person, idx) => (
+                  <div key={idx} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '0.75rem 1rem', borderRadius: 10,
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid var(--card-border)'
+                  }}>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {person.role}
+                    </span>
+                    <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {person.name}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  No assigned persons configured in tracker top rows for {clientName}.
+                </div>
+              )}
+            </div>
+
+            <div style={{ textAlign: 'right' }}>
+              <button onClick={() => setShowAssignedModal(false)} className="btn btn-secondary" style={{ padding: '0.4rem 1rem', fontSize: '0.8rem' }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Parameter Detail Drawer */}

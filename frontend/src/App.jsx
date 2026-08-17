@@ -7,7 +7,7 @@ import ErrorModal from './components/ErrorModal';
 import SheetSetup from './components/SheetSetup';
 import MeetingsView from './components/MeetingsView';
 import { fetchSheetData, fetchSheetTabs } from './utils/sheetsApi';
-import { parseDailyTrackerRows, parseJobTrackerRows, getCommonClientTabs } from './utils/sheetsParser';
+import { parseDailyTrackerRows, parseJobTrackerRows, getCommonClientTabs, parseAssignedPersons } from './utils/sheetsParser';
 import { calculateHealthScore } from './utils/scoreEngine';
 import { RefreshCw, BarChart3, Settings } from 'lucide-react';
 
@@ -147,19 +147,27 @@ export default function App() {
   }, [loadClients]);
 
   const syncStatusAging = useCallback(async (label, result) => {
-    if (!result || !result.metrics || !result.metrics.p2 || !Array.isArray(result.metrics.p2.jobs)) {
+    if (!result || !result.metrics || !result.metrics.p2) {
+      return result;
+    }
+    const targetKey = (result.metrics.p2.allMonthJobs && result.metrics.p2.allMonthJobs.length > 0)
+      ? 'allMonthJobs'
+      : 'jobs';
+    const jobsToSync = result.metrics.p2[targetKey];
+
+    if (!Array.isArray(jobsToSync) || jobsToSync.length === 0) {
       return result;
     }
     try {
       const res = await fetch(`${API_BASE}/api/job-status/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brandName: label, jobs: result.metrics.p2.jobs }),
+        body: JSON.stringify({ brandName: label, jobs: jobsToSync }),
       });
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.jobs)) {
-          result.metrics.p2.jobs = data.jobs;
+          result.metrics.p2[targetKey] = data.jobs;
         }
       }
     } catch (err) {
@@ -183,7 +191,7 @@ export default function App() {
     const cacheKey = `${clientKey}__${month}__${year}`;
 
     // ── Use cached full data if already loaded by the overview batch ──────────
-    if (clientFullData[cacheKey]) {
+    if (clientFullData[cacheKey] && Array.isArray(clientFullData[cacheKey].assignedPersons)) {
       setScoreData(clientFullData[cacheKey]);
       setCalcStatus('idle');
 
@@ -241,7 +249,8 @@ export default function App() {
 
       const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
       const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-      let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
+      const assigned  = parseAssignedPersons(dailyRaw);
+      let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name, assigned);
       result          = await syncStatusAging(label, result);
 
       setScoreData(result);
@@ -293,7 +302,8 @@ export default function App() {
                               (pair && pair.name || '').toLowerCase().includes('panasonic');
           const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
           const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-          let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
+          const assigned  = parseAssignedPersons(dailyRaw);
+          let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name, assigned);
           result          = await syncStatusAging(label, result);
           setScoreData(result);
           setCalcStatus('idle');
@@ -317,7 +327,7 @@ export default function App() {
     // Process in chunks of 3 to avoid hitting the Google Sheets
     // "60 read requests per minute per user" quota limit.
     const CHUNK_SIZE = 3;
-    const DELAY_MS   = 1200; // ~1.2s between chunks → safely under 60 req/min
+    const DELAY_MS   = 2000; // ~2.0s between chunks → safely under 60 req/min limit
 
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -338,7 +348,8 @@ export default function App() {
                               (pair && pair.name || '').toLowerCase().includes('panasonic');
           const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
           const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-          let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name);
+          const assigned  = parseAssignedPersons(dailyRaw);
+          let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name, assigned);
           result          = await syncStatusAging(label, result);
           updateFullDataCache(cacheKey, result);
         } catch (err) {

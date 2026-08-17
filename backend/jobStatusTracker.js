@@ -50,7 +50,7 @@ export async function syncJobStatusAging(brandName, jobs = []) {
     const bulkOps = [];
 
     for (const job of jobs) {
-      const jobIdentifier = (job.jobCode || job.jobName || job.task || '').toLowerCase().trim();
+      const jobIdentifier = (job.deliverable || job.id || job.jobId || job.jobName || job.task || job.jobCode || '').toLowerCase().trim();
       if (!jobIdentifier) {
         updatedJobs.push(job);
         continue;
@@ -65,6 +65,13 @@ export async function syncJobStatusAging(brandName, jobs = []) {
         if (existing && existing.statusCategory === statusCategory && existing.enteredAt) {
           // Preserve initial entry timestamp if category hasn't changed
           enteredAt = new Date(existing.enteredAt);
+        } else if (job.briefDate) {
+          const parsedBrief = new Date(job.briefDate);
+          if (!isNaN(parsedBrief.getTime()) && parsedBrief <= now) {
+            enteredAt = parsedBrief;
+          } else {
+            enteredAt = now;
+          }
         } else {
           // Brand new entry or transitioned into ATR/CTR
           enteredAt = now;
@@ -96,7 +103,7 @@ export async function syncJobStatusAging(brandName, jobs = []) {
               $set: {
                 jobKey,
                 brandKey: cleanBrand,
-                jobName: job.jobName || job.task || jobIdentifier,
+                jobName: job.deliverable || job.jobName || job.task || jobIdentifier,
                 statusCategory,
                 rawStatus: job.status,
                 enteredAt,

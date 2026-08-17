@@ -86,6 +86,62 @@ export function getCommonClientTabs(dailyTabs, jobTabs) {
 }
 
 /**
+ * Parses resource allocation (assigned team members) from the first 6-8 rows
+ * of a Meeting Tracker tab (Column A = Role Name, Column B = Person Name).
+ */
+export function parseAssignedPersons(rows) {
+  if (!rows || !Array.isArray(rows) || rows.length === 0) return [];
+  const assigned = [];
+  const seenRoles = new Set();
+
+  // Directly check the top 8 rows allocated for resource assignments
+  const resourceRows = rows.slice(0, 8);
+
+  const INVALID_TERMS = [
+    'daily tracker', 'month', 'week', 'date', 'jsr call', 'mode', 'day', 'time',
+    'verified', 'client unavailable', 'remark', 'job id', 'deliverable', 'status',
+    'brief', 'timeline', 'client meeting', 'on call', 'in person', 'monday',
+    'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'aug',
+    'jul', 'jun', 'may', 'apr', 'mar', 'feb', 'jan', 'sep', 'oct', 'nov', 'dec'
+  ];
+
+  for (let i = 0; i < resourceRows.length; i++) {
+    const row = resourceRows[i] || [];
+    if (!Array.isArray(row) || row.length === 0) continue;
+
+    for (let c = 0; c < Math.min(4, row.length - 1); c++) {
+      const roleStr = (row[c] || '').toString().trim();
+      const personStr = (row[c + 1] || '').toString().trim();
+
+      if (!roleStr || !personStr) continue;
+
+      // Skip numeric date serial numbers (e.g. 46238)
+      if (!isNaN(roleStr) || !isNaN(personStr)) continue;
+
+      const lowerRole = roleStr.toLowerCase();
+      const lowerPerson = personStr.toLowerCase();
+
+      // Check against invalid meeting table terms and dates
+      const isInvalidRole = INVALID_TERMS.some(t => lowerRole.includes(t));
+      const isInvalidPerson = INVALID_TERMS.some(t => lowerPerson.includes(t));
+
+      if (isInvalidRole || isInvalidPerson) continue;
+
+      if (roleStr.length >= 2 && personStr.length >= 2 && !seenRoles.has(lowerRole)) {
+        seenRoles.add(lowerRole);
+        assigned.push({
+          role: roleStr,
+          name: personStr
+        });
+        break;
+      }
+    }
+  }
+
+  return assigned;
+}
+
+/**
  * Parses the Daily Tracker 2D array for a specific client tab.
  *
  * @param {any[][]} rows      - 2D array from Google Sheets API
@@ -97,9 +153,9 @@ export function parseDailyTrackerRows(rows, clientName) {
     throw new Error(`Daily Tracker tab "${clientName}" is empty.`);
   }
 
-  // 1. Locate the general header region. We search for "jsr call" in the first 10 rows.
+  // 1. Locate the general header region. We search for "jsr call" in the first 25 rows.
   let hIdx = -1;
-  for (let i = 0; i < Math.min(10, rows.length); i++) {
+  for (let i = 0; i < Math.min(25, rows.length); i++) {
     const row = rows[i] || [];
     if (row.some(cell => cell?.toString().toLowerCase().includes('jsr call'))) {
       hIdx = i;
@@ -113,9 +169,9 @@ export function parseDailyTrackerRows(rows, clientName) {
     );
   }
 
-  // To be robust against row offsets (e.g. July headers in Row 7, June headers in Row 3),
-  // we look at the first 10 rows for all header-matching.
-  const maxHeaderRows = Math.min(10, rows.length);
+  // To be robust against row offsets (e.g. July headers in Row 7, June headers in Row 12),
+  // we look at the first 25 rows for all header-matching.
+  const maxHeaderRows = Math.min(25, rows.length);
   
   // Find all columns that represent a "Date" column in any of the first 10 rows
   const dateCols = [];
@@ -136,9 +192,9 @@ export function parseDailyTrackerRows(rows, clientName) {
     dateCols.push(3);
   }
 
-  // We check if a subheader row exists (contains "name", "attend", etc.)
-  // We check Row 4 and Row 7 since they are the common subheader levels
-  const isSubheader = [4, 7].some(rIdx => {
+  // We check if a subheader row exists (contains "name", "attend", etc.) around the detected header level
+  const isSubheader = [hIdx, hIdx - 1, hIdx + 1, 4, 7, 11, 12].some(rIdx => {
+    if (rIdx < 0 || rIdx >= rows.length) return false;
     const r = rows[rIdx] || [];
     return r.some(cell => {
       const txt = cell?.toString().toLowerCase().trim();
@@ -343,7 +399,11 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
     const txt = (h || '').toString().toLowerCase().trim();
     if (txt === 'job id' || txt === 'job_id') colMap.jobId = idx;
     if (txt === 'deliverable' || txt === 'deliverables' || txt.includes('deliverable') || txt === 'job name' || txt === 'task') colMap.deliverable = idx;
-    if (txt === 'job type' || txt.includes('job type')) colMap.jobType = idx;
+    if (txt === 'jobs' || txt === 'job' || txt === 'deliverable type' || txt === 'category') {
+      colMap.jobType = idx;
+    } else if (colMap.jobType === -1 && (txt === 'job type' || txt === 'job_type' || txt.includes('job type') || txt === 'type')) {
+      colMap.jobType = idx;
+    }
     if (txt === 'status') colMap.status = idx;
     if (txt === 'brief date' || txt.includes('brief date')) colMap.briefDate = idx;
     if (txt === 'client timeline' || txt === 'client_timeline' || txt === 'external timeline' || txt.includes('client timeline')) colMap.clientTimeline = idx;

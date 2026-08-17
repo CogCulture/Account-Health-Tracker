@@ -5,6 +5,8 @@
  * Only requires a verified SENDER email address in the Brevo dashboard.
  */
 
+import { getTeamsCollection } from './db.js';
+
 const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
 
 /**
@@ -20,7 +22,17 @@ function escapeHTML(str) {
     .replace(/'/g, '&#39;');
 }
 
+function parseSender(fromStr, fallbackName) {
+  if (!fromStr) return { email: 'lakshbhatia134@gmail.com', name: fallbackName || 'JSR Report Alerts' };
+  const match = fromStr.match(/^(?:"?([^"<]+)"?\s*)?<([^>]+)>$/);
+  if (match) {
+    return { name: match[1]?.trim() || fallbackName || 'JSR Report Alerts', email: match[2].trim() };
+  }
+  return { email: fromStr.trim(), name: fallbackName || 'JSR Report Alerts' };
+}
+
 async function sendViaBrevo({ apiKey, fromEmail, fromName, toAddresses, ccAddresses, subject, html }) {
+  const senderObj = parseSender(fromEmail, fromName);
   const res = await fetch(BREVO_API_URL, {
     method: 'POST',
     headers: {
@@ -29,7 +41,7 @@ async function sendViaBrevo({ apiKey, fromEmail, fromName, toAddresses, ccAddres
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      sender: { email: fromEmail, name: fromName || 'JSR Report Alerts' },
+      sender: senderObj,
       to: toAddresses,
       ...(ccAddresses && ccAddresses.length > 0 ? { cc: ccAddresses } : {}),
       subject,
@@ -39,6 +51,7 @@ async function sendViaBrevo({ apiKey, fromEmail, fromName, toAddresses, ccAddres
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    console.error('[emailService] Brevo error response:', body);
     throw new Error(body.message || `HTTP ${res.status}`);
   }
   return true;
@@ -182,6 +195,100 @@ export async function sendPodDigestEmail({ podName, to, cc, clientReports }) {
     return true;
   } catch (err) {
     console.error(`[emailService] Failed to send daily digest email for pod "${podName}":`, err.message);
+    return false;
+  }
+}
+
+export async function sendDailyReminderEmail() {
+  const apiKey = process.env.BREVO_API_KEY;
+  const fromEmail = process.env.SMTP_FROM || 'geo@cogculture.agency';
+
+  if (!apiKey) {
+    console.warn('[emailService] BREVO_API_KEY not set. Skipping reminder email.');
+    return false;
+  }
+
+  let teams = [];
+  try {
+    const teamsCollection = await getTeamsCollection();
+    teams = await teamsCollection.find({ active: true }).toArray();
+  } catch (dbErr) {
+    console.warn('[emailService] Could not fetch teams from MongoDB:', dbErr.message);
+  }
+
+  const getSheetUrl = (team, type) => {
+    const id = type === 'job' ? team?.jobId : team?.dailyId;
+    if (!id || id.trim() === '') return '#';
+    if (id.startsWith('http')) return id;
+    return `https://docs.google.com/spreadsheets/d/${id}`;
+  };
+
+  const getTeam = (name) => teams.find(t => (t.name || '').toUpperCase().replace(/\s+/g, '') === name.toUpperCase().replace(/\s+/g, ''));
+
+  const pods = [
+    { name: 'POD 1', teamKey: 'POD1' },
+    { name: 'POD 2', teamKey: 'POD2' },
+    { name: 'POD 4', teamKey: 'POD4' },
+    { name: 'B2B', teamKey: 'B2B' },
+    { name: 'PANASONIC', teamKey: 'PANASONIC' },
+    { name: 'SRHU', teamKey: 'SRHU' },
+  ];
+
+  const podListHtml = pods.map(p => {
+    const team = getTeam(p.teamKey);
+    const jsrUrl = getSheetUrl(team, 'job');
+    const meetingUrl = getSheetUrl(team, 'daily');
+
+    const jsrLinkHtml = jsrUrl !== '#' 
+      ? `<a href="${jsrUrl}" style="color: #0284c7; text-decoration: underline; font-weight: 600;" target="_blank">Open JSR Tracker</a>`
+      : `<span style="color: #94a3b8; font-style: italic;">[Not Configured]</span>`;
+
+    const meetingLinkHtml = meetingUrl !== '#' 
+      ? `<a href="${meetingUrl}" style="color: #0284c7; text-decoration: underline; font-weight: 600;" target="_blank">Open Meeting Tracker</a>`
+      : `<span style="color: #94a3b8; font-style: italic;">[Not Configured]</span>`;
+
+    return `
+      <div style="margin-bottom: 16px; padding: 14px 18px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <strong style="font-size: 15px; color: #0f172a; display: block; margin-bottom: 6px;">${p.name}</strong>
+        <div style="font-size: 14px; color: #334155; line-height: 1.6;">
+          JSR : ${jsrLinkHtml}<br/>
+          Meeting Tracker : ${meetingLinkHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b;">
+      <p style="font-size: 15px; margin-top: 0;">Hi Team,</p>
+      <p style="font-size: 14px; color: #334155; margin-bottom: 20px;">
+        This is your daily reminder to update your JSR and Meeting Tracker.<br/>
+        Please update the pending tasks.
+      </p>
+
+      ${podListHtml}
+
+      <p style="font-size: 14px; margin-top: 24px;">Thank you,</p>
+      <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0 12px 0;" />
+      <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">
+        Automated Daily Reminder · Account Health Tracker
+      </p>
+    </div>
+  `;
+
+  try {
+    await sendViaBrevo({
+      apiKey,
+      fromEmail,
+      fromName: 'JSR & Meeting Reminder',
+      toAddresses: [{ email: 'apoorv@cogculture.agency', name: 'Apoorv' }],
+      subject: 'Daily Reminder: Update JSR and Meeting Tracker',
+      html
+    });
+    console.log('[emailService] Daily 11:30 AM reminder email sent successfully to apoorv@cogculture.agency.');
+    return true;
+  } catch (err) {
+    console.error('[emailService] Failed to send reminder email:', err.message);
     return false;
   }
 }

@@ -11,6 +11,7 @@ import cron from 'node-cron';
 import multer from 'multer';
 import { runDailyDigestCheck } from './dailyDigestEngine.js';
 import { syncJobStatusAging } from './jobStatusTracker.js';
+import { sendDailyReminderEmail } from './emailService.js';
 import { getTeamsCollection, getMeetingInsightsCollection } from './db.js';
 import { ALLOWED_TEAM_NAMES } from './podConfig.js';
 import { transcribeAudio, extractMeetingInsights } from './mistralService.js';
@@ -116,7 +117,16 @@ async function getSheetTabs(spreadsheetId) {
   return tabs;
 }
 
+const dataCache = new Map();
+const DATA_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes cache for raw sheet data
+
 async function getSheetData(spreadsheetId, tabName) {
+  const cacheKey = `${spreadsheetId}__${tabName.toLowerCase().trim()}`;
+  const cached = dataCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp < DATA_CACHE_TTL_MS)) {
+    return cached.data;
+  }
+
   // Fetch actual tab names from the spreadsheet (uses 5-min cache)
   const actualTabs = await getSheetTabs(spreadsheetId);
   
@@ -127,13 +137,32 @@ async function getSheetData(spreadsheetId, tabName) {
   // Format the matched tabName as a valid A1 range by wrapping in single quotes
   const safeRange = `'${matchedTab.replace(/'/g, "''")}'`;
 
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: safeRange,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-    dateTimeRenderOption: 'SERIAL_NUMBER',
-  });
-  return res.data.values || [];
+  let res;
+  try {
+    res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: safeRange,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+      dateTimeRenderOption: 'SERIAL_NUMBER',
+    });
+  } catch (err) {
+    if (err.message && (err.message.includes('Quota exceeded') || err.message.includes('429') || err.code === 429)) {
+      console.warn(`[server] Quota hit for ${tabName}. Retrying after 1.5s...`);
+      await new Promise(r => setTimeout(r, 1500));
+      res = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: safeRange,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+        dateTimeRenderOption: 'SERIAL_NUMBER',
+      });
+    } else {
+      throw err;
+    }
+  }
+
+  const data = res.data.values || [];
+  dataCache.set(cacheKey, { data, timestamp: Date.now() });
+  return data;
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -463,8 +492,34 @@ app.get('/api/meetings/insights', async (_req, res) => {
   }
 });
 
+// GET /api/test-reminder-email (for instant testing)
+app.get('/api/test-reminder-email', async (_req, res) => {
+  try {
+    const success = await sendDailyReminderEmail();
+    if (success) {
+      res.json({ success: true, message: 'Daily reminder email sent to apoorv@cogculture.agency' });
+    } else {
+      res.status(500).json({ error: 'Failed to send reminder email. Check server logs.' });
+    }
+  } catch (err) {
+    console.error('[server] GET /api/test-reminder-email error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Background Cron Scheduler ──────────────────────────────────────────────
-// Scheduled daily pod digest (pending L/XL/XXL jobs + meeting attendance % + status aging sync) at 11:00 AM every day (IST Timezone)
+// Scheduled daily 11:30 AM reminder email to apoorv@cogculture.agency (IST Timezone)
+cron.schedule('30 11 * * *', () => {
+  console.log('[cron] Running scheduled daily 11:30 AM reminder email...');
+  sendDailyReminderEmail().catch(err => {
+    console.error('[cron] Scheduled 11:30 AM reminder email failed:', err.message);
+  });
+}, {
+  scheduled: true,
+  timezone: "Asia/Kolkata"
+});
+
+// Scheduled daily pod digest at 11:00 AM every day (IST Timezone)
 cron.schedule('0 11 * * *', () => {
   console.log('[cron] Running scheduled daily 11:00 AM digest and status aging check...');
   runDailyDigestCheck(sheets).catch(err => {
