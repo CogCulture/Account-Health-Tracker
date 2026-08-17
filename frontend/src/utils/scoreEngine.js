@@ -73,11 +73,13 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     let candidateDates = [];
 
     if (row.status?.toLowerCase().trim() === 'closed' || row.status?.toLowerCase().trim() === 'completed') {
-      // A closed job belongs to a month ONLY if its completion date (closingDate or deliveryDate) falls in that month.
-      // If neither closingDate nor deliveryDate is recorded, fall back to clientTimeline.
-      candidateDates = [row.closingDate || row.deliveryDate || row.clientTimeline].filter(Boolean);
+      // If JOB CLOSING DATE or DELIVERY DATE is present, map by those; otherwise fall back to CLIENT TIMELINE
+      candidateDates = [row.closingDate, row.deliveryDate].filter(Boolean);
+      if (candidateDates.length === 0) {
+        candidateDates = [row.clientTimeline].filter(Boolean);
+      }
     } else {
-      // For open/pending jobs, evaluate month by clientTimeline (or deliveryDate/closingDate)
+      // For open/pending jobs, check clientTimeline first, then deliveryDate/closingDate
       candidateDates = [row.clientTimeline, row.deliveryDate, row.closingDate].filter(Boolean);
     }
 
