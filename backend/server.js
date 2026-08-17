@@ -61,17 +61,28 @@ const alertTriggerLimiter = rateLimit({
 // Apply global rate limiting to all requests
 app.use(generalLimiter);
 
-// ── CORS: allow Vite dev server ──────────────────────────────────────────────
+// ── CORS: allow Vite dev server and Render frontend ────────────────────────────
+const allowedOrigins = process.env.CORS_ORIGIN 
+  ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
+  : ['http://localhost:5173', 'http://localhost:5174', 'https://account-health-frontend1.onrender.com'];
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) || (process.env.CORS_ORIGIN && process.env.CORS_ORIGIN.split(',').includes(origin))) {
-      callback(null, true);
-    } else {
-      callback(null, true); // Permissive for local dev
-    }
+    // Allow requests with no origin (like mobile apps, curl, server-to-server)
+    if (!origin) return callback(null, true);
+    if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) return callback(null, true);
+    // Allow any onrender.com origin as fallback
+    if (origin.endsWith('.onrender.com')) return callback(null, true);
+    callback(null, true); // Permissive fallback
   },
-  methods: ['GET', 'POST', 'DELETE'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-cron-secret'],
 }));
+
+// Handle explicit Preflight OPTIONS requests for all routes
+app.options('*', cors());
 
 app.use(express.json());
 
