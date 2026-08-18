@@ -4,7 +4,7 @@
  * manual audio upload, both feeding the same Mistral extraction).
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+import { apiUrl } from './apiClient';
 
 /**
  * Uploads a meeting audio recording for transcription + insight extraction.
@@ -17,7 +17,7 @@ export async function uploadMeetingAudio(audioFile, meetingTitle = '') {
   formData.append('audio', audioFile);
   if (meetingTitle) formData.append('meetingTitle', meetingTitle);
 
-  const res = await fetch(`${API_BASE}/api/meetings/upload`, {
+  const res = await fetch(apiUrl('/api/meetings/upload'), {
     method: 'POST',
     body: formData,
   });
@@ -35,7 +35,7 @@ export async function uploadMeetingAudio(audioFile, meetingTitle = '') {
  * @returns {Promise<{ newMeetingsProcessed: number, meetings: object[] }>}
  */
 export async function syncFathomMeetings() {
-  const res = await fetch(`${API_BASE}/api/meetings/fathom/sync`, { method: 'POST' });
+  const res = await fetch(apiUrl('/api/meetings/fathom/sync'), { method: 'POST' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || `Fathom sync failed (HTTP ${res.status})`);
@@ -48,7 +48,7 @@ export async function syncFathomMeetings() {
  * @returns {Promise<object[]>}
  */
 export async function fetchMeetingInsights() {
-  const res = await fetch(`${API_BASE}/api/meetings/insights`);
+  const res = await fetch(apiUrl('/api/meetings/insights'));
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || `Failed to fetch meeting insights (HTTP ${res.status})`);

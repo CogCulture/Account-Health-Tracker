@@ -9,9 +9,8 @@ import MeetingsView from './components/MeetingsView';
 import { fetchSheetData, fetchSheetTabs } from './utils/sheetsApi';
 import { parseDailyTrackerRows, parseJobTrackerRows, getCommonClientTabs, parseAssignedPersons } from './utils/sheetsParser';
 import { calculateHealthScore } from './utils/scoreEngine';
+import { apiUrl } from './utils/apiClient';
 import { RefreshCw, BarChart3, Settings } from 'lucide-react';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
 const SCORE_CACHE_KEY = 'client_health_score_persistent_cache';
 
@@ -91,7 +90,7 @@ export default function App() {
   useEffect(() => {
     const fetchActiveTeams = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/teams`);
+        const res = await fetch(apiUrl('/api/teams'));
         const data = await res.json();
         const active = data.teams.filter(t => t.active);
         
@@ -159,7 +158,7 @@ export default function App() {
       return result;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/job-status/sync`, {
+      const res = await fetch(apiUrl('/api/job-status/sync'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ brandName: label, jobs: jobsToSync }),

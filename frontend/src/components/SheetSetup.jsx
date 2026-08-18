@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link2, HeartPulse, Plus, Trash2, Check, Pencil, ChevronDown } from 'lucide-react';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+import { apiUrl } from '../utils/apiClient';
 
 // Team name is now used to route the daily digest email to the right POD's
 // recipients (see backend/podConfig.js), so it must be one of these values.
@@ -18,16 +17,16 @@ function extractSheetId(input) {
 // ── Pair form ─────────────────────────────────────────────────────────────────
 
 function PairForm({ initial, onSave, onCancel }) {
-  const [name,     setName]     = useState(initial?.name    || TEAM_NAMES[0]);
+  const [name, setName] = useState(initial?.name || TEAM_NAMES[0]);
   const [dailyUrl, setDailyUrl] = useState(initial?.dailyId || '');
-  const [jobUrl,   setJobUrl]   = useState(initial?.jobId   || '');
-  const [error,    setError]    = useState('');
+  const [jobUrl, setJobUrl] = useState(initial?.jobId || '');
+  const [error, setError] = useState('');
 
   const handle = () => {
     const dailyId = extractSheetId(dailyUrl);
-    const jobId   = extractSheetId(jobUrl);
+    const jobId = extractSheetId(jobUrl);
     if (!dailyId) { setError('Could not extract a valid ID from the Daily Tracker URL.'); return; }
-    if (!jobId)   { setError('Could not extract a valid ID from the Job Tracker URL.'); return; }
+    if (!jobId) { setError('Could not extract a valid ID from the Job Tracker URL.'); return; }
     onSave({ name, dailyId, jobId });
   };
 
@@ -82,15 +81,15 @@ function PairForm({ initial, onSave, onCancel }) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function SheetSetup({ open, onClose, onPairsChanged }) {
-  const [pairs,     setPairs]     = useState([]);
-  const [adding,    setAdding]    = useState(false);
+  const [pairs, setPairs] = useState([]);
+  const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const fetchTeams = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/teams`);
+      const res = await fetch(apiUrl('/api/teams'));
       const data = await res.json();
       setPairs(data.teams || []);
     } catch (err) {
@@ -106,7 +105,7 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
 
   const handleAdd = async ({ name, dailyId, jobId }) => {
     try {
-      const res = await fetch(`${API_BASE}/api/teams`, {
+      const res = await fetch(apiUrl('/api/teams'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, dailyId, jobId }),
@@ -122,7 +121,7 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
 
   const handleEdit = async (id, { name, dailyId, jobId }) => {
     try {
-      const res = await fetch(`${API_BASE}/api/teams`, {
+      const res = await fetch(apiUrl('/api/teams'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, name, dailyId, jobId }),
@@ -138,7 +137,7 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
 
   const handleDelete = async (id) => {
     try {
-      const res = await fetch(`${API_BASE}/api/teams/${id}`, {
+      const res = await fetch(apiUrl(`/api/teams/${id}`), {
         method: 'DELETE',
       });
       const data = await res.json();
@@ -155,7 +154,7 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
     if (target.active && activeCount === 1) return;
 
     try {
-      const res = await fetch(`${API_BASE}/api/teams`, {
+      const res = await fetch(apiUrl('/api/teams'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...target, active: !target.active }),
@@ -186,10 +185,10 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
             Add your first team sheets. You can add more teams later from the sidebar.
           </p>
           <PairForm onSave={handleAdd} />
-          
+
           <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
-            <button 
-              onClick={handleClose} 
+            <button
+              onClick={handleClose}
               style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '0.85rem', cursor: 'pointer', textDecoration: 'underline' }}
             >
               Continue without adding / already added

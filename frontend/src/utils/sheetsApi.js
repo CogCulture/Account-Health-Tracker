@@ -4,7 +4,7 @@
  * No credentials are ever exposed to the browser.
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+import { apiUrl } from './apiClient';
 
 /**
  * Fetches all tab names from a spreadsheet.
@@ -12,7 +12,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
  * @returns {Promise<string[]>}
  */
 export async function fetchSheetTabs(sheetId) {
-  const res = await fetch(`${API_BASE}/api/sheets/tabs?sheetId=${encodeURIComponent(sheetId)}`);
+  const res = await fetch(apiUrl(`/api/sheets/tabs?sheetId=${encodeURIComponent(sheetId)}`));
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || `Failed to fetch tabs (HTTP ${res.status})`);
@@ -29,7 +29,7 @@ export async function fetchSheetTabs(sheetId) {
  */
 export async function fetchSheetData(sheetId, tabName) {
   const res = await fetch(
-    `${API_BASE}/api/sheets/data?sheetId=${encodeURIComponent(sheetId)}&tab=${encodeURIComponent(tabName)}`
+    apiUrl(`/api/sheets/data?sheetId=${encodeURIComponent(sheetId)}&tab=${encodeURIComponent(tabName)}`)
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
