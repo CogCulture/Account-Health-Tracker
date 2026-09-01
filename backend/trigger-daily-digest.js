@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
-import { runDailyDigestCheck } from './dailyDigestEngine.js';
+import { buildAndSaveDailyDigestSnapshot } from './dailyDigestEngine.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -27,10 +27,10 @@ try {
 
 const sheets = google.sheets({ version: 'v4', auth });
 
-console.log('Manually triggering daily digest check...');
+console.log('Manually triggering daily digest snapshot sync...');
 try {
-  await runDailyDigestCheck(sheets);
-  console.log('Daily digest check completed!');
+  const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'manual-script' });
+  console.log(`Daily digest snapshot ${snapshot.dateKey} completed! No email was sent.`);
 } catch (error) {
-  console.error('Failed to run Daily Digest check:', error);
+  console.error('Failed to run Daily Digest snapshot sync:', error);
 }

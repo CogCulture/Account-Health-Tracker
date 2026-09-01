@@ -38,3 +38,18 @@ export async function fetchSheetData(sheetId, tabName) {
   const { data } = await res.json();
   return data;
 }
+
+/**
+ * Fetches the latest saved daily digest snapshot from MongoDB-backed API.
+ * This lets the dashboard hydrate from the 11:00 AM sync instead of
+ * recalculating every score from Google Sheets on page load.
+ */
+export async function fetchDailyDigestSnapshot({ fallback = true } = {}) {
+  const res = await fetch(apiUrl(`/api/daily-digest-snapshot?fallback=${fallback ? 'true' : 'false'}`));
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `Failed to fetch daily digest snapshot (HTTP ${res.status})`);
+  }
+  const { snapshot } = await res.json();
+  return snapshot;
+}

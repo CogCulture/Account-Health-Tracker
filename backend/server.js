@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import cron from 'node-cron';
 import multer from 'multer';
-import { runDailyDigestCheck } from './dailyDigestEngine.js';
+import { runDailyDigestCheck, buildAndSaveDailyDigestSnapshot, getLatestDailyDigestSnapshot, sendManagementDigestFromSnapshot } from './dailyDigestEngine.js';
 import { syncJobStatusAging } from './jobStatusTracker.js';
 import { sendDailyReminderEmail } from './emailService.js';
 import { getTeamsCollection, getMeetingInsightsCollection } from './db.js';
@@ -454,8 +454,11 @@ app.post('/api/meetings/upload', alertTriggerLimiter, audioUpload.single('audio'
  */
 app.post('/api/meetings/fathom/sync', alertTriggerLimiter, async (req, res) => {
   try {
-    const collection = await getMeetingInsightsCollection();
-    const sinceDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    if (!process.env.FATHOM_API_KEY) {
+      return res.status(200).json({ success: false, error: 'FATHOM_API_KEY is not configured in backend/.env.', newMeetingsProcessed: 0, meetings: [] });
+    }
+    const days = parseInt(req.query?.days || req.body?.days || '365', 10);
+    const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const meetings = await listRecentMeetings(sinceDate);
 
     const processed = [];
@@ -494,6 +497,42 @@ app.post('/api/meetings/fathom/sync', alertTriggerLimiter, async (req, res) => {
 });
 
 /**
+ * POST /api/meetings/transcript
+ * Accepts a raw text transcript (JSON: { meetingTitle, transcriptText }),
+ * runs it through Mistral AI insight extraction, stores in MongoDB, and returns the result.
+ * Designed for Chrome Extension live text capture (zero audio stored/transmitted).
+ */
+app.post('/api/meetings/transcript', alertTriggerLimiter, express.json({ limit: '10mb' }), async (req, res) => {
+  const meetingTitle = typeof req.body?.meetingTitle === 'string' ? req.body.meetingTitle.trim() : '';
+  const transcriptText = typeof req.body?.transcriptText === 'string' ? req.body.transcriptText.trim() : '';
+
+  if (!transcriptText) {
+    return res.status(400).json({ error: 'Missing transcriptText in request body.' });
+  }
+
+  try {
+    const insights = await extractMeetingInsights(transcriptText, meetingTitle);
+    const collection = await getMeetingInsightsCollection();
+
+    const doc = {
+      source: 'chrome-extension',
+      sourceMeetingId: null,
+      meetingTitle: meetingTitle || null,
+      meetingDate: new Date(),
+      transcriptText,
+      ...insights,
+      createdAt: new Date(),
+    };
+    const result = await collection.insertOne(doc);
+
+    res.json({ success: true, meeting: { ...doc, _id: result.insertedId } });
+  } catch (err) {
+    console.error('[server] POST /api/meetings/transcript error:', err);
+    res.status(500).json({ error: 'Failed to process meeting transcript.' });
+  }
+});
+
+/**
  * GET /api/meetings/insights
  * Returns stored meeting insights (both Fathom-synced and manually uploaded),
  * most recent first.
@@ -509,43 +548,120 @@ app.get('/api/meetings/insights', async (_req, res) => {
   }
 });
 
-// GET /api/test-reminder-email (for instant testing)
-app.get('/api/test-reminder-email', async (_req, res) => {
+/**
+ * DELETE /api/meetings/insights
+ * Deletes all stored meeting insights from MongoDB.
+ */
+app.delete('/api/meetings/insights', async (_req, res) => {
   try {
-    const success = await sendDailyReminderEmail();
-    if (success) {
-      res.json({ success: true, message: 'Daily reminder email sent to apoorv@cogculture.agency' });
-    } else {
-      res.status(500).json({ error: 'Failed to send reminder email. Check server logs.' });
-    }
+    const collection = await getMeetingInsightsCollection();
+    const result = await collection.deleteMany({});
+    res.json({ success: true, deletedCount: result.deletedCount });
   } catch (err) {
-    console.error('[server] GET /api/test-reminder-email error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('[server] DELETE /api/meetings/insights error:', err);
+    res.status(500).json({ error: 'Failed to delete meeting insights.' });
+  }
+});
+
+/**
+ * GET /api/daily-digest-snapshot
+ * Returns the latest daily digest snapshot from MongoDB for today or fallback.
+ */
+app.get('/api/daily-digest-snapshot', async (req, res) => {
+  try {
+    const fallback = req.query.fallback !== 'false';
+    const snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: fallback });
+    if (!snapshot) {
+      return res.status(404).json({ error: 'No daily snapshot available yet.' });
+    }
+    res.json(snapshot);
+  } catch (err) {
+    console.error('[server] GET /api/daily-digest-snapshot error:', err);
+    res.status(500).json({ error: 'Failed to retrieve daily digest snapshot.' });
+  }
+});
+
+/**
+ * POST /api/daily-digest-snapshot/build
+ * Re-scans active Google Sheets and updates/builds MongoDB snapshot for today.
+ */
+app.post('/api/daily-digest-snapshot/build', alertTriggerLimiter, async (_req, res) => {
+  try {
+    const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'manual-build', today: new Date() });
+    res.json({ success: true, dateKey: snapshot.dateKey, snapshot });
+  } catch (err) {
+    console.error('[server] POST /api/daily-digest-snapshot/build error:', err);
+    res.status(500).json({ error: err.message || 'Failed to build daily digest snapshot.' });
+  }
+});
+
+/**
+ * POST /api/daily-digest-snapshot/send-management
+ * Sends the management digest email using the updated snapshot for today.
+ */
+app.post('/api/daily-digest-snapshot/send-management', alertTriggerLimiter, async (req, res) => {
+  try {
+    const overrideEmail = typeof req.body?.to === 'string' ? req.body.to.trim() : null;
+    const snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: true });
+    if (!snapshot) {
+      return res.status(404).json({ error: 'No snapshot found to send digest.' });
+    }
+    const result = await sendManagementDigestFromSnapshot(snapshot, { to: overrideEmail, force: true });
+    res.json({ success: true, dateKey: snapshot.dateKey, result });
+  } catch (err) {
+    console.error('[server] POST /api/daily-digest-snapshot/send-management error:', err);
+    res.status(500).json({ error: err.message || 'Failed to send management digest email.' });
   }
 });
 
 // ── Background Cron Scheduler ──────────────────────────────────────────────
-// Scheduled daily 11:30 AM reminder email to apoorv@cogculture.agency (IST Timezone)
-cron.schedule('30 11 * * *', () => {
-  console.log('[cron] Running scheduled daily 11:30 AM reminder email...');
-  sendDailyReminderEmail().catch(err => {
-    console.error('[cron] Scheduled 11:30 AM reminder email failed:', err.message);
-  });
-}, {
-  scheduled: true,
-  timezone: "Asia/Kolkata"
-});
+const isCronEnabled = process.env.ENABLE_EMAIL_CRON !== 'false';
 
-// Scheduled daily pod digest at 11:00 AM every day (IST Timezone)
-cron.schedule('0 11 * * *', () => {
-  console.log('[cron] Running scheduled daily 11:00 AM digest and status aging check...');
-  runDailyDigestCheck(sheets).catch(err => {
-    console.error('[cron] Scheduled daily digest check failed:', err.message);
+if (isCronEnabled) {
+  console.log('[cron] Automated daily cron tasks are ENABLED: Snapshot at 11:00 AM IST & Email at 11:30 AM IST.');
+
+  // Scheduled daily 11:00 AM snapshot update from live Google Sheets (IST Timezone)
+  cron.schedule('0 11 * * *', async () => {
+    console.log('[cron] Running scheduled daily 11:00 AM snapshot update...');
+    try {
+      const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'cron-11am-build', today: new Date() });
+      console.log(`[cron] Daily 11:00 AM snapshot build completed for dateKey: ${snapshot.dateKey}`);
+    } catch (err) {
+      console.error('[cron] Scheduled 11:00 AM snapshot update failed:', err.message);
+    }
+  }, {
+    scheduled: true,
+    timezone: "Asia/Kolkata"
   });
-}, {
-  scheduled: true,
-  timezone: "Asia/Kolkata"
-});
+
+  // Scheduled daily 11:30 AM management digest email trigger (IST Timezone)
+  cron.schedule('30 11 * * *', async () => {
+    console.log('[cron] Running scheduled daily 11:30 AM management digest email trigger...');
+    try {
+      let snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: false });
+      if (!snapshot) {
+        console.log('[cron] Today\'s snapshot not found at 11:30 AM. Auto-building fresh snapshot now...');
+        snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'cron-1130am-autobuild', today: new Date() });
+      }
+
+      if (!snapshot) {
+        console.warn('[cron] 11:30 AM management mail skipped: Could not build or fetch snapshot.');
+        return;
+      }
+
+      console.log(`[cron] Triggering 11:30 AM management digest email for snapshot dateKey: ${snapshot.dateKey}...`);
+      const result = await sendManagementDigestFromSnapshot(snapshot, { force: true });
+      console.log('[cron] Scheduled 11:30 AM management digest email result:', result);
+    } catch (err) {
+      console.error('[cron] Scheduled 11:30 AM management email trigger failed:', err.message);
+    }
+  }, {
+    scheduled: true,
+    timezone: "Asia/Kolkata"
+  });
+} else {
+  console.warn('[cron] Automated cron tasks are currently DISABLED (ENABLE_EMAIL_CRON=false).');
+}
 
 // ── Start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {

@@ -44,3 +44,12 @@ export async function getMeetingInsightsCollection() {
   const database = await connectToDatabase();
   return database.collection('meetingInsights');
 }
+
+/**
+ * Returns the dailyDigestSnapshots collection instance. Each document stores
+ * the morning sheet sync output used by dashboard hydration and management mail.
+ */
+export async function getDailyDigestSnapshotsCollection() {
+  const database = await connectToDatabase();
+  return database.collection('dailyDigestSnapshots');
+}

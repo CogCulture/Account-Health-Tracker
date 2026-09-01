@@ -198,17 +198,30 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
   });
   
   const totalClosed = closedJobs.length;
+  const evalDate = (selectedYear < today.getFullYear() || (selectedYear === today.getFullYear() && selectedMonth < today.getMonth()))
+    ? new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59)
+    : today;
 
   const fmtDate = d => d ? d.toISOString().split('T')[0] : null;
 
   // Build per-job detail for the drawer (closed jobs)
   const p2JobDetails = closedJobs.map(row => {
     const deadline   = row.clientTimeline;
-    // Primary actual completion date is closingDate; fallback to deliveryDate if closingDate is absent
+    // Primary actual completion date is closingDate or deliveryDate
     const actualDate = row.closingDate || row.deliveryDate;
     let onTime;
+    let delayDays = 0;
+
     if (deadline && actualDate) {
       onTime = actualDate.getTime() <= deadline.getTime();
+      if (!onTime) {
+        const dMidnight = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate());
+        const aMidnight = new Date(actualDate.getFullYear(), actualDate.getMonth(), actualDate.getDate());
+        const diffMs = aMidnight - dMidnight;
+        if (diffMs > 0) {
+          delayDays = Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+        }
+      }
     } else if (actualDate && !deadline) {
       // If actual completion date exists for a closed job but no client timeline is set, mark as on-time
       onTime = true;
@@ -218,13 +231,17 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     } else {
       onTime = null;
     }
+
     return {
       id:                row.jobId,
       deliverable:       row.deliverable || row.jobId,
       jobType:           (row.jobType || row.deliverableType || 'Others').toString().trim() || 'Others',
       deadline:          fmtDate(deadline),
+      clientTimeline:    fmtDate(deadline),
       actual:            fmtDate(actualDate),
+      deliveryDate:      fmtDate(actualDate),
       onTime,
+      delayDays,
       priority:          (row.priority || '').toString().trim().toUpperCase(),
       clientAlterations: row.clientAlterations || 0,
     };
@@ -236,21 +253,50 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     const actualDate = row.closingDate || row.deliveryDate;
     const status     = (row.status || '').toString().trim();
     let onTime = null;
+    let delayDays = 0;
+
     if (deadline && actualDate) {
       onTime = actualDate.getTime() <= deadline.getTime();
+      if (!onTime) {
+        const dMidnight = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate());
+        const aMidnight = new Date(actualDate.getFullYear(), actualDate.getMonth(), actualDate.getDate());
+        const diffMs = aMidnight - dMidnight;
+        if (diffMs > 0) {
+          delayDays = Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+        }
+      }
+    } else if (deadline && !actualDate) {
+      const isClosed = status.toLowerCase() === 'closed' || status.toLowerCase() === 'completed';
+      if (isClosed) {
+        onTime = true;
+      } else {
+        const dMidnight = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate());
+        const eMidnight = new Date(evalDate.getFullYear(), evalDate.getMonth(), evalDate.getDate());
+        if (eMidnight > dMidnight) {
+          onTime = false;
+          const diffMs = eMidnight - dMidnight;
+          delayDays = Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+        } else {
+          onTime = null;
+        }
+      }
     } else if (actualDate && !deadline && (status.toLowerCase() === 'closed' || status.toLowerCase() === 'completed')) {
       onTime = true;
     } else if (isPanasonicClient && !actualDate && (status.toLowerCase() === 'closed' || status.toLowerCase() === 'completed')) {
       onTime = true;
     }
+
     return {
       id:                row.jobId,
       deliverable:       row.deliverable || row.jobId || 'Unnamed Job',
       jobType:           (row.jobType || row.deliverableType || 'Others').toString().trim() || 'Others',
       clientTimeline:    fmtDate(deadline),
+      deadline:          fmtDate(deadline),
       actual:            fmtDate(actualDate),
+      deliveryDate:      fmtDate(actualDate),
       status:            status || 'Pending',
       onTime,
+      delayDays,
       priority:          (row.priority || '').toString().trim().toUpperCase(),
       clientAlterations: row.clientAlterations || 0,
     };

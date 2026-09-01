@@ -6,11 +6,12 @@ import OverviewDashboard from './components/OverviewDashboard';
 import ErrorModal from './components/ErrorModal';
 import SheetSetup from './components/SheetSetup';
 import MeetingsView from './components/MeetingsView';
-import { fetchSheetData, fetchSheetTabs } from './utils/sheetsApi';
+import { fetchDailyDigestSnapshot, fetchSheetData, fetchSheetTabs } from './utils/sheetsApi';
 import { parseDailyTrackerRows, parseJobTrackerRows, getCommonClientTabs, parseAssignedPersons } from './utils/sheetsParser';
 import { calculateHealthScore } from './utils/scoreEngine';
-import { apiUrl } from './utils/apiClient';
 import { RefreshCw, BarChart3, Settings } from 'lucide-react';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
 const SCORE_CACHE_KEY = 'client_health_score_persistent_cache';
 
@@ -39,15 +40,15 @@ export default function App() {
 
   // Period state (controlled here so sidebar & main area share the same values)
   const [month, setMonth] = useState(new Date().getMonth());
-  const [year,  setYear]  = useState(new Date().getFullYear());
+  const [year, setYear] = useState(new Date().getFullYear());
 
   // Selected client
   const [selectedClient, setSelectedClient] = useState(null);
 
   // Score data for the selected client
-  const [scoreData,    setScoreData]    = useState(null);
-  const [calcStatus,   setCalcStatus]   = useState('idle'); // idle | loading | error
-  const [calcError,    setCalcError]    = useState('');
+  const [scoreData, setScoreData] = useState(null);
+  const [calcStatus, setCalcStatus] = useState('idle'); // idle | loading | error
+  const [calcError, setCalcError] = useState('');
 
   // Full result cache for overview cards & trend graphs (persisted in localStorage)
   const [clientFullData, setClientFullData] = useState(() => loadPersistentCache());
@@ -63,6 +64,10 @@ export default function App() {
     return scoresMap;
   });
 
+  // Lifted client loading states
+  const [clients, setClients] = useState([]);
+  const [loadStatus, setLoadStatus] = useState('loading');
+
   const updateFullDataCache = useCallback((key, data) => {
     setClientFullData(prev => {
       const next = { ...prev, [key]: data };
@@ -75,12 +80,53 @@ export default function App() {
     }));
   }, []);
 
-  // Lifted client loading states
-  const [clients, setClients]       = useState([]);
-  const [loadStatus, setLoadStatus] = useState('loading');
+  useEffect(() => {
+    if (!activePairs.length) return;
+
+    let cancelled = false;
+    const hydrateFromSnapshot = async () => {
+      try {
+        const snapshot = await fetchDailyDigestSnapshot({ fallback: false });
+        if (cancelled || !snapshot?.dashboardScores) return;
+        if (snapshot.month !== month || snapshot.year !== year) return;
+
+        const snapshotScores = snapshot.dashboardScores || {};
+        if (Object.keys(snapshotScores).length === 0) return;
+
+        setClientFullData(prev => {
+          const next = { ...prev, ...snapshotScores };
+          savePersistentCache(next);
+          return next;
+        });
+
+        const scoreSummary = {};
+        Object.entries(snapshotScores).forEach(([key, value]) => {
+          if (value?.scores) {
+            scoreSummary[key] = {
+              percentage: value.scores.percentage,
+              rating: value.rating,
+            };
+          }
+        });
+        setClientScores(prev => ({ ...prev, ...scoreSummary }));
+
+        if (Array.isArray(snapshot.dashboardClients) && snapshot.dashboardClients.length > 0) {
+          setClients(prev => prev.length > 0 ? prev : snapshot.dashboardClients);
+          setLoadStatus(prev => prev === 'loading' ? 'loaded' : prev);
+        }
+      } catch (err) {
+        console.info('[snapshotHydration] No current daily snapshot available yet:', err.message);
+      }
+    };
+
+    hydrateFromSnapshot();
+    return () => {
+      cancelled = true;
+    };
+  }, [activePairs, month, year]);
 
   // Error modal
-  const [errorMsg,    setErrorMsg]    = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const [isErrorOpen, setIsErrorOpen] = useState(false);
 
   // View: 'dashboard' | 'history' | 'overview' | 'meetings'
@@ -90,15 +136,15 @@ export default function App() {
   useEffect(() => {
     const fetchActiveTeams = async () => {
       try {
-        const res = await fetch(apiUrl('/api/teams'));
+        const res = await fetch(`${API_BASE}/api/teams`);
         const data = await res.json();
         const active = data.teams.filter(t => t.active);
-        
+
         if (active.length > 0) {
           setActivePairs(active);
         } else {
           const envDaily = import.meta.env.VITE_DAILY_SHEET_ID;
-          const envJob   = import.meta.env.VITE_JOB_SHEET_ID;
+          const envJob = import.meta.env.VITE_JOB_SHEET_ID;
           if (envDaily && envJob) {
             setActivePairs([{ id: 'env', name: 'Default', dailyId: envDaily, jobId: envJob, active: true }]);
           } else {
@@ -158,7 +204,7 @@ export default function App() {
       return result;
     }
     try {
-      const res = await fetch(apiUrl('/api/job-status/sync'), {
+      const res = await fetch(`${API_BASE}/api/job-status/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ brandName: label, jobs: jobsToSync }),
@@ -213,14 +259,14 @@ export default function App() {
             ]);
             const pair = activePairs.find(p => p.id === clientEntry.pairId);
             const isPanasonic = (tabName || '').toLowerCase().includes('panasonic') ||
-                                (label || '').toLowerCase().includes('panasonic') ||
-                                (pair && pair.name || '').toLowerCase().includes('panasonic');
+              (label || '').toLowerCase().includes('panasonic') ||
+              (pair && pair.name || '').toLowerCase().includes('panasonic');
             const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
-            const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
+            const jobRows = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
 
             for (const item of missingPrev) {
               let pResult = calculateHealthScore(dailyRows, jobRows, label, item.pm, item.py, pair?.name);
-              pResult     = await syncStatusAging(label, pResult);
+              pResult = await syncStatusAging(label, pResult);
               updateFullDataCache(item.pKey, pResult);
             }
           } catch (e) {
@@ -243,14 +289,14 @@ export default function App() {
 
       const pair = activePairs.find(p => p.id === clientEntry.pairId);
       const isPanasonic = (tabName || '').toLowerCase().includes('panasonic') ||
-                          (label || '').toLowerCase().includes('panasonic') ||
-                          (pair && pair.name || '').toLowerCase().includes('panasonic');
+        (label || '').toLowerCase().includes('panasonic') ||
+        (pair && pair.name || '').toLowerCase().includes('panasonic');
 
       const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
-      const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-      const assigned  = parseAssignedPersons(dailyRaw);
-      let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name, assigned);
-      result          = await syncStatusAging(label, result);
+      const jobRows = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
+      const assigned = parseAssignedPersons(dailyRaw);
+      let result = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name, assigned);
+      result = await syncStatusAging(label, result);
 
       setScoreData(result);
       setCalcStatus('idle');
@@ -297,13 +343,13 @@ export default function App() {
           ]);
           const pair = activePairs.find(p => p.id === clientEntry.pairId);
           const isPanasonic = (tabName || '').toLowerCase().includes('panasonic') ||
-                              (label || '').toLowerCase().includes('panasonic') ||
-                              (pair && pair.name || '').toLowerCase().includes('panasonic');
+            (label || '').toLowerCase().includes('panasonic') ||
+            (pair && pair.name || '').toLowerCase().includes('panasonic');
           const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
-          const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-          const assigned  = parseAssignedPersons(dailyRaw);
-          let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name, assigned);
-          result          = await syncStatusAging(label, result);
+          const jobRows = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
+          const assigned = parseAssignedPersons(dailyRaw);
+          let result = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name, assigned);
+          result = await syncStatusAging(label, result);
           setScoreData(result);
           setCalcStatus('idle');
           const cacheKey = `${selectedClient}__${month}__${year}`;
@@ -326,7 +372,7 @@ export default function App() {
     // Process in chunks of 3 to avoid hitting the Google Sheets
     // "60 read requests per minute per user" quota limit.
     const CHUNK_SIZE = 3;
-    const DELAY_MS   = 2000; // ~2.0s between chunks → safely under 60 req/min limit
+    const DELAY_MS = 2000; // ~2.0s between chunks → safely under 60 req/min limit
 
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -343,13 +389,13 @@ export default function App() {
           ]);
           const pair = activePairs.find(p => p.id === clientEntry.pairId);
           const isPanasonic = (tabName || '').toLowerCase().includes('panasonic') ||
-                              (label || '').toLowerCase().includes('panasonic') ||
-                              (pair && pair.name || '').toLowerCase().includes('panasonic');
+            (label || '').toLowerCase().includes('panasonic') ||
+            (pair && pair.name || '').toLowerCase().includes('panasonic');
           const dailyRows = parseDailyTrackerRows(dailyRaw, tabName);
-          const jobRows   = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
-          const assigned  = parseAssignedPersons(dailyRaw);
-          let result      = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name, assigned);
-          result          = await syncStatusAging(label, result);
+          const jobRows = parseJobTrackerRows(jobRaw, tabName, isPanasonic);
+          const assigned = parseAssignedPersons(dailyRaw);
+          let result = calculateHealthScore(dailyRows, jobRows, label, month, year, pair?.name, assigned);
+          result = await syncStatusAging(label, result);
           updateFullDataCache(cacheKey, result);
         } catch (err) {
           console.error(`[batchLoad] Failed for ${label}:`, err);
@@ -372,7 +418,7 @@ export default function App() {
     setCalcStatus('idle');
     if (selectedClient) {
       // Trigger recalculation with new month
-      setTimeout(() => {}, 0); // will trigger via useEffect below
+      setTimeout(() => { }, 0); // will trigger via useEffect below
     }
   };
 

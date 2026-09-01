@@ -178,91 +178,199 @@ function P2Detail({ metrics, selectedMonth, selectedYear }) {
   const delayed = totalClosed - onTimeJobs;
   const displayJobs = allMonthJobs.length > 0 ? allMonthJobs : jobs;
 
+  const [filter, setFilter] = React.useState('all');
+
+  const delayedCount = displayJobs.filter(j => j.onTime === false || (j.delayDays && j.delayDays > 0)).length;
+  const onTimeCount = displayJobs.filter(j => j.onTime === true && (!j.delayDays || j.delayDays === 0)).length;
+
+  const visibleJobs = displayJobs.filter(item => {
+    const isDelayed = item.onTime === false || (item.delayDays && item.delayDays > 0);
+    if (filter === 'delayed') return isDelayed;
+    if (filter === 'ontime') return item.onTime === true && !isDelayed;
+    return true;
+  });
+
   return (
     <>
       <SectionTitle>This month at a glance</SectionTitle>
       <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem' }}>
         <StatCard label="Jobs closed" value={totalClosed} />
         <StatCard label="On time" value={onTimeJobs} color="#10B981" />
-        <StatCard label="Delayed" value={delayed} color={delayed > 0 ? '#EF4444' : 'var(--text-muted)'} />
+        <StatCard label="Delayed" value={delayedCount > 0 ? delayedCount : delayed} color={delayedCount > 0 ? '#EF4444' : 'var(--text-muted)'} />
       </div>
+
+      {delayedCount > 0 && (
+        <div style={{
+          padding: '0.65rem 0.85rem',
+          borderRadius: 8,
+          background: 'rgba(239, 68, 68, 0.08)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          marginBottom: '1rem',
+          fontSize: '0.78rem',
+          color: '#EF4444',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem'
+        }}>
+          <span style={{ fontWeight: 700 }}>⚠️ Alert:</span>
+          <span>{delayedCount} deliverable{delayedCount !== 1 ? 's have' : ' has'} exceeded the client timeline target.</span>
+        </div>
+      )}
 
       {displayJobs.length > 0 && (
         <>
-          <SectionTitle>Deliverables List</SectionTitle>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <SectionTitle>Deliverables List</SectionTitle>
+            <div style={{ display: 'flex', gap: '0.4rem', marginTop: '1rem' }}>
+              <button onClick={() => setFilter('all')} style={{
+                padding: '0.25rem 0.6rem', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600,
+                border: filter === 'all' ? '1px solid #3B82F6' : '1px solid var(--card-border)',
+                background: filter === 'all' ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.03)',
+                color: filter === 'all' ? '#3B82F6' : 'var(--text-secondary)', cursor: 'pointer'
+              }}>
+                All ({displayJobs.length})
+              </button>
+              <button onClick={() => setFilter('delayed')} style={{
+                padding: '0.25rem 0.6rem', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600,
+                border: filter === 'delayed' ? '1px solid #EF4444' : '1px solid var(--card-border)',
+                background: filter === 'delayed' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255,255,255,0.03)',
+                color: filter === 'delayed' ? '#EF4444' : 'var(--text-secondary)', cursor: 'pointer'
+              }}>
+                Delayed ({delayedCount})
+              </button>
+              <button onClick={() => setFilter('ontime')} style={{
+                padding: '0.25rem 0.6rem', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600,
+                border: filter === 'ontime' ? '1px solid #10B981' : '1px solid var(--card-border)',
+                background: filter === 'ontime' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255,255,255,0.03)',
+                color: filter === 'ontime' ? '#10B981' : 'var(--text-secondary)', cursor: 'pointer'
+              }}>
+                On Time ({onTimeCount})
+              </button>
+            </div>
+          </div>
+
           <div style={{
             display: 'flex', flexDirection: 'column', gap: '0.5rem',
             marginBottom: '0.75rem'
           }}>
             {/* Table Header */}
             <div style={{
-              display: 'grid', gridTemplateColumns: '1fr 120px 140px',
+              display: 'grid', gridTemplateColumns: '1fr 140px 140px',
               padding: '0.4rem 0.8rem', fontSize: '0.72rem', fontWeight: 700,
               color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em'
             }}>
               <span>Job Name (Deliverable)</span>
-              <span>Client Timeline</span>
-              <span style={{ textAlign: 'right' }}>Status</span>
+              <span>Timeline / Delivery</span>
+              <span style={{ textAlign: 'right' }}>Status & Delay</span>
             </div>
 
             {/* List Rows */}
-            {displayJobs.map((item, idx) => (
-              <div key={idx} style={{
-                display: 'grid', gridTemplateColumns: '1fr 120px 140px',
-                alignItems: 'center', padding: '0.75rem 0.85rem', borderRadius: 8,
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid var(--card-border)',
-                gap: '0.5rem'
-              }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
-                    {item.deliverable || item.id || 'Unnamed Deliverable'}
-                  </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    {item.id && !item.id.startsWith('job-') && !item.id.startsWith('panasonic-') && (
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                        ID: {item.id}
+            {visibleJobs.map((item, idx) => {
+              const isDelayed = item.onTime === false || (item.delayDays && item.delayDays > 0);
+              const timelineDate = item.clientTimeline || item.deadline || '—';
+              const deliveredDate = item.deliveryDate || item.actual || (item.status?.toLowerCase() === 'closed' || item.status?.toLowerCase() === 'completed' ? '—' : 'Not delivered yet');
+
+              return (
+                <div key={idx} style={{
+                  display: 'grid', gridTemplateColumns: '1fr 140px 140px',
+                  alignItems: 'center', padding: '0.75rem 0.85rem', borderRadius: 8,
+                  background: isDelayed ? 'rgba(239, 68, 68, 0.04)' : 'rgba(255,255,255,0.03)',
+                  border: isDelayed ? '1px solid rgba(239, 68, 68, 0.25)' : '1px solid var(--card-border)',
+                  gap: '0.5rem'
+                }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
+                      {item.deliverable || item.id || 'Unnamed Deliverable'}
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                      {item.id && !item.id.startsWith('job-') && !item.id.startsWith('panasonic-') && (
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                          ID: {item.id}
+                        </span>
+                      )}
+                      {item.clientAlterations > 0 ? (
+                        <span style={{
+                          fontSize: '0.68rem',
+                          fontWeight: 600,
+                          padding: '0.12rem 0.45rem',
+                          borderRadius: 6,
+                          background: 'rgba(245, 158, 11, 0.15)',
+                          color: '#F59E0B',
+                          border: '1px solid rgba(245, 158, 11, 0.3)',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {item.clientAlterations} Client Alteration{item.clientAlterations > 1 ? 's' : ''}
+                        </span>
+                      ) : (
+                        <span style={{
+                          fontSize: '0.68rem',
+                          fontWeight: 600,
+                          padding: '0.12rem 0.45rem',
+                          borderRadius: 6,
+                          background: 'rgba(16, 185, 129, 0.12)',
+                          color: '#10B981',
+                          border: '1px solid rgba(16, 185, 129, 0.3)',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          NO CLIENT ALTERATION
+                        </span>
+                      )}
+                      {isDelayed && (
+                        <span style={{
+                          fontSize: '0.68rem',
+                          fontWeight: 700,
+                          padding: '0.12rem 0.45rem',
+                          borderRadius: 6,
+                          background: 'rgba(239, 68, 68, 0.15)',
+                          color: '#EF4444',
+                          border: '1px solid rgba(239, 68, 68, 0.35)',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          DELAYED
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', fontSize: '0.75rem' }}>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Client Target: </span>
+                      <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{timelineDate}</span>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Delivered: </span>
+                      <span style={{ color: deliveredDate === 'Not delivered yet' ? '#F59E0B' : (isDelayed ? '#EF4444' : 'var(--text-secondary)'), fontWeight: isDelayed ? 600 : 400 }}>
+                        {deliveredDate}
                       </span>
-                    )}
-                    {item.clientAlterations > 0 ? (
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
+                    {getStatusBadge(item.status, item.statusAging, item, selectedMonth, selectedYear)}
+                    {isDelayed && (
                       <span style={{
                         fontSize: '0.68rem',
-                        fontWeight: 600,
+                        fontWeight: 700,
+                        color: '#EF4444',
+                        background: 'rgba(239, 68, 68, 0.12)',
                         padding: '0.12rem 0.45rem',
-                        borderRadius: 6,
-                        background: 'rgba(245, 158, 11, 0.15)',
-                        color: '#F59E0B',
-                        border: '1px solid rgba(245, 158, 11, 0.3)',
+                        borderRadius: 4,
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
                         whiteSpace: 'nowrap'
                       }}>
-                        {item.clientAlterations} Client Alteration{item.clientAlterations > 1 ? 's' : ''}
-                      </span>
-                    ) : (
-                      <span style={{
-                        fontSize: '0.68rem',
-                        fontWeight: 600,
-                        padding: '0.12rem 0.45rem',
-                        borderRadius: 6,
-                        background: 'rgba(16, 185, 129, 0.12)',
-                        color: '#10B981',
-                        border: '1px solid rgba(16, 185, 129, 0.3)',
-                        whiteSpace: 'nowrap'
-                      }}>
-                        NO CLIENT ALTERATION
+                        {item.delayDays ? `${item.delayDays} day${item.delayDays > 1 ? 's' : ''} delayed` : 'Delayed'}
                       </span>
                     )}
                   </div>
                 </div>
+              );
+            })}
 
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                  {item.clientTimeline || item.deadline || '—'}
-                </span>
-
-                <div style={{ textAlign: 'right' }}>
-                  {getStatusBadge(item.status, item.statusAging, item, selectedMonth, selectedYear)}
-                </div>
-              </div>
-            ))}
+            {visibleJobs.length === 0 && (
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', padding: '1rem 0', textAlign: 'center' }}>
+                No {filter} deliverables found.
+              </p>
+            )}
           </div>
         </>
       )}

@@ -47,7 +47,12 @@ export function meetingTranscriptToText(meeting) {
   if (typeof meeting.transcript === 'string') return meeting.transcript;
   if (Array.isArray(meeting.transcript)) {
     return meeting.transcript
-      .map(entry => `${entry.speaker || entry.speaker_name || 'Speaker'}: ${entry.text || ''}`)
+      .map(entry => {
+        const speakerName = (typeof entry.speaker === 'object' && entry.speaker?.display_name)
+          ? entry.speaker.display_name
+          : (typeof entry.speaker === 'string' ? entry.speaker : (entry.speaker_name || 'Speaker'));
+        return `${speakerName}: ${entry.text || ''}`;
+      })
       .join('\n');
   }
   return '';

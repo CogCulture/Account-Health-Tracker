@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Account Health - Google Meet AI Notetaker",
+  "version": "1.0.0",
+  "description": "Live text-only speech & transcript capture for Google Meet. Sends transcript directly to Account Health Tracker Dashboard.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "http://localhost:3001/*",
+    "https://*.onrender.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["contentScript.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Google Meet AI Notetaker"
+  }
+}

@@ -48,19 +48,44 @@ If attendees are not named explicitly, use generic labels like "Speaker 1". If n
  * @returns {Promise<{ attendees: string[], jobsDiscussed: {job: string, insights: string}[], summary: string }>}
  */
 export async function extractMeetingInsights(transcriptText, meetingTitle = '') {
-  const response = await client.chat.complete({
-    model: 'mistral-large-latest',
-    responseFormat: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: INSIGHTS_SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content: `Meeting title: ${meetingTitle || '(untitled)'}\n\nTranscript:\n${transcriptText}`,
-      },
-    ],
+  if (!process.env.MISTRAL_API_KEY) {
+    console.warn('[mistralService] MISTRAL_API_KEY not configured. Falling back to basic transcript parsing.');
+    return buildFallbackInsights(transcriptText);
+  }
+
+  try {
+    const response = await client.chat.complete({
+      model: 'mistral-large-latest',
+      responseFormat: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: INSIGHTS_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: `Meeting title: ${meetingTitle || '(untitled)'}\n\nTranscript:\n${transcriptText}`,
+        },
+      ],
+    });
+
+    const content = response.choices[0].message.content;
+    const raw = typeof content === 'string' ? content : content.map(c => c.text || '').join('');
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('[mistralService] extractMeetingInsights AI call failed:', err.message);
+    return buildFallbackInsights(transcriptText);
+  }
+}
+
+function buildFallbackInsights(transcriptText) {
+  const lines = transcriptText.split('\n').filter(Boolean);
+  const speakers = new Set();
+  lines.forEach(l => {
+    const match = l.match(/^\[?\d*:?\d*\]?\s*([^:]+):/);
+    if (match) speakers.add(match[1].trim());
   });
 
-  const content = response.choices[0].message.content;
-  const raw = typeof content === 'string' ? content : content.map(c => c.text || '').join('');
-  return JSON.parse(raw);
+  return {
+    attendees: Array.from(speakers).length > 0 ? Array.from(speakers) : ['Participant'],
+    jobsDiscussed: [],
+    summary: transcriptText.slice(0, 300) + (transcriptText.length > 300 ? '...' : '')
+  };
 }

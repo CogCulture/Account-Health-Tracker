@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   Mic, Upload, RefreshCw, AlertCircle, Users, Briefcase,
-  FileText, Cloud, Paperclip,
+  FileText, Cloud, Paperclip, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { uploadMeetingAudio, syncFathomMeetings, fetchMeetingInsights } from '../utils/meetingsApi';
 
@@ -225,6 +225,8 @@ export default function MeetingsView() {
 
 function MeetingCard({ meeting }) {
   const date = meeting.meetingDate ? new Date(meeting.meetingDate) : null;
+  const [showTranscript, setShowTranscript] = useState(false);
+
   return (
     <div style={{
       padding: '1.25rem',
@@ -266,7 +268,7 @@ function MeetingCard({ meeting }) {
       )}
 
       {meeting.jobsDiscussed?.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <Briefcase size={14} style={{ color: 'var(--text-muted)', flexShrink: 0, marginTop: '0.15rem' }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
             {meeting.jobsDiscussed.map((jd, idx) => (
@@ -276,6 +278,40 @@ function MeetingCard({ meeting }) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {meeting.transcriptText && (
+        <div style={{ marginTop: '0.85rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--card-border)' }}>
+          <button
+            className="btn btn-secondary btn-outline"
+            onClick={() => setShowTranscript(prev => !prev)}
+            style={{ fontSize: '0.78rem', padding: '0.35rem 0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+          >
+            <FileText size={13} />
+            {showTranscript ? 'Hide Full Transcript' : 'View Full Transcript'}
+            {showTranscript ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          </button>
+
+          {showTranscript && (
+            <div style={{
+              marginTop: '0.75rem',
+              padding: '1rem',
+              borderRadius: 8,
+              background: 'rgba(0, 0, 0, 0.25)',
+              border: '1px solid var(--card-border)',
+              maxHeight: '350px',
+              overflowY: 'auto',
+              fontFamily: 'monospace',
+              fontSize: '0.8rem',
+              lineHeight: 1.6,
+              color: 'var(--text-secondary)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word'
+            }}>
+              {meeting.transcriptText}
+            </div>
+          )}
         </div>
       )}
     </div>

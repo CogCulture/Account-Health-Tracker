@@ -1,13 +1,40 @@
-import { parseJobTrackerRows, parseDailyTrackerRows, getCommonClientTabs } from '../frontend/src/utils/sheetsParser.js';
+import { parseJobTrackerRows, parseDailyTrackerRows, getCommonClientTabs, parseAssignedPersons } from '../frontend/src/utils/sheetsParser.js';
+import { calculateHealthScore } from '../frontend/src/utils/scoreEngine.js';
 import { sendPodDigestEmail } from './emailService.js';
-import { getTeamsCollection } from './db.js';
+import { getTeamsCollection, getDailyDigestSnapshotsCollection } from './db.js';
 import { POD_RECIPIENTS } from './podConfig.js';
 import { syncJobStatusAging } from './jobStatusTracker.js';
+import crypto from 'node:crypto';
 
-// Standalone sheets API helpers (mirrors alertEngine.js)
-async function callWithRetry(fn, retries = 5, delay = 3000) {
+const SHEETS_REQUEST_TIMEOUT_MS = Number(process.env.SHEETS_REQUEST_TIMEOUT_MS || 30000);
+const SHEETS_RETRY_COUNT = Number(process.env.SHEETS_RETRY_COUNT || 2);
+const SNAPSHOT_TIMEZONE = 'Asia/Kolkata';
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function withTimeout(promise, label, timeoutMs = SHEETS_REQUEST_TIMEOUT_MS) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+}
+
+// Standalone sheets API helpers with bounded retries and detailed labels.
+async function callWithRetry(fn, { retries = SHEETS_RETRY_COUNT, delay = 2000, label = 'Google Sheets request' } = {}) {
   try {
-    return await fn();
+    const startedAt = Date.now();
+    const result = await withTimeout(fn(), label);
+    const elapsed = Date.now() - startedAt;
+    if (elapsed > 5000) {
+      console.warn(`[sheets API] Slow request: ${label} completed in ${elapsed}ms.`);
+    }
+    return result;
   } catch (error) {
     const isRateLimit =
       error.status === 429 ||
@@ -17,92 +44,234 @@ async function callWithRetry(fn, retries = 5, delay = 3000) {
       (error.message && error.message.toLowerCase().includes('read requests'));
 
     if (isRateLimit && retries > 0) {
-      console.warn(`[sheets API] Rate limit / quota reached. Retrying in ${delay}ms... (${retries} retries left)`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-      return callWithRetry(fn, retries - 1, delay * 2); // Exponential backoff
+      console.warn(`[sheets API] Rate limit / quota reached for ${label}. Retrying in ${delay}ms... (${retries} retries left)`);
+      await sleep(delay);
+      return callWithRetry(fn, { retries: retries - 1, delay: delay * 2, label });
     }
     throw error;
   }
 }
 
 async function getSheetTabs(sheets, spreadsheetId) {
-  const res = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId }));
+  const res = await callWithRetry(
+    () => sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties.title',
+    }),
+    { label: `tabs:${spreadsheetId}` }
+  );
   return res.data.sheets.map(s => s.properties.title);
 }
 
-async function getSheetData(sheets, spreadsheetId, tabName) {
-  const actualTabs = await getSheetTabs(sheets, spreadsheetId);
+async function getSheetData(sheets, spreadsheetId, tabName, knownTabs = null) {
+  const actualTabs = knownTabs || await getSheetTabs(sheets, spreadsheetId);
   const targetLowerTrimmed = tabName.toLowerCase().trim();
   const matchedTab = actualTabs.find(t => t.toLowerCase().trim() === targetLowerTrimmed) || tabName;
   const safeRange = `'${matchedTab.replace(/'/g, "''")}'`;
 
-  let res;
-  try {
-    res = await callWithRetry(() => sheets.spreadsheets.get({
-      spreadsheetId,
-      ranges: [safeRange],
-      includeGridData: true,
-    }));
-  } catch (err) {
-    const fallbackRes = await callWithRetry(() => sheets.spreadsheets.values.get({
+  const valuesRes = await callWithRetry(
+    () => sheets.spreadsheets.values.get({
       spreadsheetId,
       range: safeRange,
       valueRenderOption: 'UNFORMATTED_VALUE',
       dateTimeRenderOption: 'SERIAL_NUMBER',
-    }));
-    return fallbackRes.data.values || [];
+    }),
+    { label: `values:${spreadsheetId}:${matchedTab}` }
+  );
+
+  const rawValues = valuesRes.data.values || [];
+
+  let hiddenRowIndices = new Set();
+  try {
+    const metaRes = await callWithRetry(
+      () => sheets.spreadsheets.get({
+        spreadsheetId,
+        ranges: [safeRange],
+        fields: 'sheets.data.rowMetadata.hiddenByFilter,sheets.data.rowMetadata.hiddenByUser',
+      }),
+      { label: `rowMetadata:${spreadsheetId}:${matchedTab}` }
+    );
+    const rowMetadata = metaRes.data.sheets?.[0]?.data?.[0]?.rowMetadata || [];
+    rowMetadata.forEach((meta, idx) => {
+      if (meta.hiddenByFilter || meta.hiddenByUser) {
+        hiddenRowIndices.add(idx);
+      }
+    });
+  } catch (err) {
+    console.warn(`[dailyDigestEngine] Could not read hidden-row metadata for "${matchedTab}". Continuing with visible values only. ${err.message}`);
   }
 
-  const sheetObj = res.data.sheets?.[0];
-  const gridData = sheetObj?.data?.[0];
-  const rowData = gridData?.rowData || [];
-
-  const visible2DArray = [];
-
-  for (let r = 0; r < rowData.length; r++) {
-    const rMeta = rowData[r];
-    if (rMeta.rowMetadata?.hiddenByFilter || rMeta.rowMetadata?.hiddenByUser) {
-      continue;
-    }
-
-    const rowValues = [];
-    const values = rMeta.values || [];
-    let hasValue = false;
-
-    for (let c = 0; c < values.length; c++) {
-      const cell = values[c] || {};
-      let cellVal = '';
-
-      if (cell.effectiveValue) {
-        if (cell.effectiveValue.numberValue !== undefined) {
-          cellVal = cell.effectiveValue.numberValue;
-        } else if (cell.effectiveValue.stringValue !== undefined) {
-          cellVal = cell.effectiveValue.stringValue;
-        } else if (cell.effectiveValue.boolValue !== undefined) {
-          cellVal = cell.effectiveValue.boolValue;
-        } else if (cell.effectiveValue.formulaValue !== undefined) {
-          cellVal = cell.effectiveValue.formulaValue;
-        }
-      } else if (cell.formattedValue !== undefined) {
-        cellVal = cell.formattedValue;
-      }
-
-      rowValues.push(cellVal);
-      if (cellVal !== '' && cellVal !== null && cellVal !== undefined) {
-        hasValue = true;
-      }
-    }
-
-    if (hasValue || rowValues.length > 0) {
-      visible2DArray.push(rowValues);
-    }
-  }
-
-  return visible2DArray;
+  return rawValues.filter((_, idx) => !hiddenRowIndices.has(idx));
 }
 
 function toMidnight(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function getSnapshotDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: SNAPSHOT_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function formatDateKey(date) {
+  if (!(date instanceof Date) || isNaN(date.getTime())) return null;
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getDefaultMeetingStats() {
+  return { elapsedWeekdays: 0, metDays: 0, percentage: 0, unavailable: true };
+}
+
+function getScanFailureReason(error) {
+  const message = (error?.message || 'Unknown error').toString();
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes('quota') ||
+    normalized.includes('rate limit') ||
+    normalized.includes('read requests')
+  ) {
+    return 'Brand could not be scanned because Google Sheets read quota was exceeded. Please retry after the quota window resets.';
+  }
+
+  if (normalized.includes('timed out')) {
+    return 'Brand could not be scanned because the Google Sheets request timed out.';
+  }
+
+  return `Brand could not be scanned: ${message.slice(0, 180)}`;
+}
+
+function getNoDeadlineReason() {
+  return 'No XL/XXL jobs due today or tomorrow.';
+}
+
+function normalizeRecipients(recipients) {
+  return [...new Set((recipients || []).map(email => email.toString().trim().toLowerCase()).filter(Boolean))].sort();
+}
+
+function getManagementDigestSignature(snapshot, recipients) {
+  const payload = {
+    dateKey: snapshot?.dateKey || '',
+    recipients: normalizeRecipients(recipients),
+    reports: (snapshot?.consolidatedReports || []).map(report => ({
+      podName: report.podName || '',
+      clientName: report.clientName || '',
+      pendingJobs: (report.pendingJobs || []).map(job => ({
+        jobId: job.jobId || '',
+        deliverable: job.deliverable || '',
+        priority: job.priority || '',
+        status: job.status || '',
+        dueDate: job.dueDate || '',
+        dueLabel: job.dueLabel || '',
+      })),
+      meetingStats: report.meetingStats || null,
+      noDeadlineReason: report.noDeadlineReason || '',
+      scanReason: report.scanReason || '',
+      attendanceReason: report.attendanceReason || '',
+    })),
+  };
+
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+function buildPendingJobs(jobs, today) {
+  const todayMidnight = toMidnight(today);
+  const pendingJobs = [];
+
+  for (const job of jobs) {
+    const priority = (job.priority || '').toString().trim().toUpperCase();
+    if (priority !== 'XL' && priority !== 'XXL') continue;
+
+    const status = (job.status || '').toString().trim();
+    const statusLower = status.toLowerCase();
+    if (statusLower === 'closed' || statusLower === 'completed') continue;
+    if (
+      statusLower.includes('atr') ||
+      statusLower.includes('agency to revert') ||
+      statusLower.includes('ctr') ||
+      statusLower.includes('client to revert')
+    ) continue;
+
+    let diffDays = null;
+    let dueLabel = '-';
+    let dueDate = '-';
+    let isDueTodayOrTomorrow = false;
+
+    if (job.clientTimeline instanceof Date && !isNaN(job.clientTimeline.getTime())) {
+      const timelineMidnight = toMidnight(job.clientTimeline);
+      diffDays = Math.round((timelineMidnight.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
+      dueDate = formatDateKey(job.clientTimeline);
+      if (diffDays === 0) {
+        dueLabel = 'Today';
+        isDueTodayOrTomorrow = true;
+      } else if (diffDays === 1) {
+        dueLabel = 'Tomorrow';
+        isDueTodayOrTomorrow = true;
+      } else if (diffDays < 0) {
+        dueLabel = `${Math.abs(diffDays)}d Overdue`;
+      } else {
+        dueLabel = `${diffDays}d left`;
+      }
+    }
+
+    pendingJobs.push({
+      jobId: job.jobId,
+      deliverable: job.deliverable || job.jobId,
+      priority,
+      status,
+      statusCategory: job.statusAging?.category || '',
+      daysInStatus: job.statusAging?.daysInStatus ?? null,
+      enteredAtFormatted: job.statusAging?.enteredAtFormatted || '',
+      dueDate,
+      dueLabel,
+      diffDays,
+      isDueTodayOrTomorrow,
+      isPanasonic: false,
+    });
+  }
+
+  // Sort: Today/Tomorrow first, then Overdue, then nearest upcoming
+  pendingJobs.sort((a, b) => {
+    if (a.isDueTodayOrTomorrow && !b.isDueTodayOrTomorrow) return -1;
+    if (!a.isDueTodayOrTomorrow && b.isDueTodayOrTomorrow) return 1;
+    if (a.diffDays !== null && b.diffDays !== null) return a.diffDays - b.diffDays;
+    if (a.diffDays !== null) return -1;
+    if (b.diffDays !== null) return 1;
+    return 0;
+  });
+
+  return pendingJobs;
+}
+
+function isInCurrentMonth(date, today) {
+  if (!(date instanceof Date) || isNaN(date.getTime())) return false;
+  return date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear();
+}
+
+async function syncScoreStatusAging(label, scoreData) {
+  if (!scoreData?.metrics?.p2) return scoreData;
+  const targetKey = Array.isArray(scoreData.metrics.p2.allMonthJobs) && scoreData.metrics.p2.allMonthJobs.length > 0
+    ? 'allMonthJobs'
+    : 'jobs';
+  const jobsToSync = scoreData.metrics.p2[targetKey];
+  if (!Array.isArray(jobsToSync) || jobsToSync.length === 0) return scoreData;
+
+  try {
+    scoreData.metrics.p2[targetKey] = await syncJobStatusAging(label, jobsToSync);
+  } catch (err) {
+    console.warn(`[dailyDigestEngine] Status aging sync failed for "${label}": ${err.message}`);
+  }
+
+  return scoreData;
 }
 
 /**
@@ -135,46 +304,56 @@ function computeMeetingStats(dailyRecords, today) {
   return { elapsedWeekdays, metDays: metDays.size, percentage };
 }
 
-/**
- * Scans all active teams (named after their POD) for pending L/XL/XXL jobs
- * due today or tomorrow, along with month-to-date daily meeting attendance,
- * and emails a consolidated digest to each POD's recipients.
- * @param {object} sheets - The google.sheets API client instance
- */
-export async function runDailyDigestCheck(sheets, overrideEmail = null) {
-  console.log(`[dailyDigestEngine] Starting daily digest check${overrideEmail ? ` (override recipient: ${overrideEmail})` : ''}...`);
+async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manual', today = new Date() } = {}) {
+  const startedAt = Date.now();
+  const normalizedFilter = Array.isArray(podNames)
+    ? podNames.map(n => n.trim().toUpperCase()).filter(Boolean)
+    : null;
 
-  let activeTeams = [];
-  try {
-    const collection = await getTeamsCollection();
-    const teams = await collection.find({}).toArray();
-    activeTeams = teams.filter(t => t.active);
-  } catch (dbErr) {
-    console.error('[dailyDigestEngine] Failed to fetch active teams from MongoDB:', dbErr.message);
-    return;
-  }
+  console.log(`[dailyDigestEngine] Building daily snapshot${normalizedFilter ? ` for pods: ${normalizedFilter.join(', ')}` : ''}...`);
+
+  const collection = await getTeamsCollection();
+  const allTeams = await collection.find({}).toArray();
+  const activeTeams = allTeams
+    .filter(t => t.active)
+    .filter(t => !normalizedFilter || normalizedFilter.includes((t.name || '').trim().toUpperCase()));
+
+  const podEmailsToSend = [];
+  const consolidatedReports = [];
+  const dashboardScores = {};
+  const dashboardClients = [];
+  const diagnostics = [];
+  const errors = [];
+  let combinedCcList = [];
+  let scannedClientCount = 0;
 
   if (activeTeams.length === 0) {
-    console.log('[dailyDigestEngine] No active teams configured in MongoDB. Skipping check.');
-    return;
+    console.log('[dailyDigestEngine] No active teams configured for snapshot.');
   }
 
-  const today = new Date();
-  const todayMidnight = toMidnight(today);
-
-  const podEmailsToSend = []; // Array of { podName, to, clientReports }
-  const consolidatedReports = []; // Array of client reports with podName injected
-  let combinedCcList = [];
-
   for (const team of activeTeams) {
+    const teamStartedAt = Date.now();
     const podName = (team.name || '').trim().toUpperCase();
     const recipients = POD_RECIPIENTS[podName];
+    const teamDiagnostic = {
+      podName,
+      teamId: team.id,
+      clientsFound: 0,
+      clientsScanned: 0,
+      errors: [],
+      durationMs: 0,
+    };
+
+    diagnostics.push(teamDiagnostic);
+
     if (!recipients) {
-      console.warn(`[dailyDigestEngine] Team "${team.name}" has no matching POD recipient config. Skipping.`);
+      const message = `Team "${team.name}" has no matching POD recipient config.`;
+      console.warn(`[dailyDigestEngine] ${message}`);
+      teamDiagnostic.errors.push(message);
+      errors.push({ scope: 'team', podName, message });
       continue;
     }
 
-    // Accumulate unique CC recipients (management list)
     if (recipients.cc && recipients.cc.length > 0) {
       combinedCcList = [...new Set([...combinedCcList, ...recipients.cc])];
     }
@@ -189,84 +368,154 @@ export async function runDailyDigestCheck(sheets, overrideEmail = null) {
       ]);
 
       const commonClients = getCommonClientTabs(dailyTabs, jobTabs);
+      teamDiagnostic.clientsFound = commonClients.length;
 
       for (const clientName of commonClients) {
+        const clientStartedAt = Date.now();
         try {
-          const isPanasonic = (clientName || '').toLowerCase().includes('panasonic');
+          console.log(`[dailyDigestEngine] Reading "${clientName}" for pod "${podName}"...`);
+          const isPanasonic = (clientName || '').toLowerCase().includes('panasonic') || podName === 'PANASONIC';
+          const clientKey = `${team.id}::${clientName}`;
+          const label = activeTeams.length > 1 && podName ? `${clientName} (${podName})` : clientName;
 
-          const [rawJobs, rawDaily] = await Promise.all([
-            getSheetData(sheets, team.jobId, clientName),
-            getSheetData(sheets, team.dailyId, clientName),
-          ]);
+          let rawJobs = null;
+          let rawDaily = null;
+          let jobReadError = null;
+          let dailyReadError = null;
 
-          const jobs = parseJobTrackerRows(rawJobs, clientName, isPanasonic);
           try {
-            await syncJobStatusAging(clientName, jobs);
-          } catch (e) {
-            console.warn('[dailyDigest] Status aging sync failed:', e);
+            rawJobs = await getSheetData(sheets, team.jobId, clientName, jobTabs);
+          } catch (err) {
+            jobReadError = err;
           }
-          const pendingJobs = [];
 
-          for (const job of jobs) {
-            const priority = (job.priority || '').toString().trim().toUpperCase();
-            if (priority !== 'L' && priority !== 'XL' && priority !== 'XXL') continue;
+          try {
+            rawDaily = await getSheetData(sheets, team.dailyId, clientName, dailyTabs);
+          } catch (err) {
+            dailyReadError = err;
+          }
 
-            const status = (job.status || '').toString().trim().toLowerCase();
-            if (status === 'closed' || status === 'completed') continue;
+          let jobs = [];
+          let pendingJobs = [];
+          let dailyRecords = [];
+          let meetingStats = getDefaultMeetingStats();
+          let scanReason = null;
+          let attendanceReason = null;
 
-            if (!job.clientTimeline || !(job.clientTimeline instanceof Date) || isNaN(job.clientTimeline.getTime())) continue;
+          if (jobReadError) {
+            scanReason = getScanFailureReason(jobReadError);
+            const message = `Failed to read Job Tracker for "${clientName}" on pod "${podName}": ${jobReadError.message}`;
+            console.error(`[dailyDigestEngine] ${message}`);
+            teamDiagnostic.errors.push(message);
+            errors.push({ scope: 'client', podName, clientName, message });
+          } else {
+            jobs = parseJobTrackerRows(rawJobs, clientName, isPanasonic);
+            try {
+              jobs = await syncJobStatusAging(clientName, jobs);
+            } catch (err) {
+              console.warn(`[dailyDigestEngine] Status aging sync failed for "${clientName}": ${err.message}`);
+            }
+            pendingJobs = buildPendingJobs(jobs, today).map(job => ({ ...job, isPanasonic }));
+          }
 
-            const timelineMidnight = toMidnight(job.clientTimeline);
-            const diffDays = Math.round((timelineMidnight.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
+          if (dailyReadError) {
+            attendanceReason = getScanFailureReason(dailyReadError);
+            meetingStats = { ...getDefaultMeetingStats(), reason: attendanceReason };
+            const message = `Failed to read Daily Tracker for "${clientName}" on pod "${podName}": ${dailyReadError.message}`;
+            console.error(`[dailyDigestEngine] ${message}`);
+            teamDiagnostic.errors.push(message);
+            errors.push({ scope: 'client', podName, clientName, message });
+          } else {
+            try {
+              dailyRecords = parseDailyTrackerRows(rawDaily, clientName);
+              meetingStats = computeMeetingStats(dailyRecords, today);
+            } catch (dailyErr) {
+              attendanceReason = `Could not parse daily meeting tracker: ${dailyErr.message}`;
+              meetingStats = { ...getDefaultMeetingStats(), reason: attendanceReason };
+              console.error(`[dailyDigestEngine] Failed to parse Daily Tracker for "${clientName}":`, dailyErr.message);
+            }
+          }
 
-            // Include jobs due today, or overdue XL/XXL jobs (exclude tomorrow/future jobs)
-            const isDueToday = (diffDays === 0);
-            const isOverdueXLOrXXL = (diffDays < 0 && (priority === 'XL' || priority === 'XXL') && status === 'in progress');
+          if (!jobReadError && !dailyReadError) {
+            const assignedPersons = parseAssignedPersons(rawDaily);
+            let scoreData = calculateHealthScore(
+              dailyRecords,
+              jobs,
+              label,
+              today.getMonth(),
+              today.getFullYear(),
+              podName,
+              assignedPersons
+            );
+            scoreData = await syncScoreStatusAging(label, scoreData);
 
-            if (!isDueToday && !isOverdueXLOrXXL) continue;
-
-            const dueLabel = isDueToday ? 'Today' : `Overdue (${Math.abs(diffDays)}d)`;
-
-            pendingJobs.push({
-              jobId: job.jobId,
-              deliverable: job.deliverable || job.jobId,
-              priority,
-              dueDate: job.clientTimeline.toISOString().split('T')[0],
-              dueLabel,
-              isPanasonic,
+            const cacheKey = `${clientKey}__${today.getMonth()}__${today.getFullYear()}`;
+            dashboardScores[cacheKey] = scoreData;
+            dashboardClients.push({
+              key: clientKey,
+              label,
+              tabName: clientName,
+              pairId: team.id,
+              dailyId: team.dailyId,
+              jobId: team.jobId,
             });
           }
 
-          let dailyRecords = [];
-          try {
-            dailyRecords = parseDailyTrackerRows(rawDaily, clientName);
-          } catch (dailyErr) {
-            console.error(`[dailyDigestEngine] Failed to parse Daily Tracker for "${clientName}":`, dailyErr.message);
-          }
+          clientReports.push({
+            clientName,
+            pendingJobs,
+            meetingStats,
+            noDeadlineReason: !jobReadError && pendingJobs.length === 0 ? getNoDeadlineReason() : '',
+            scanReason,
+            attendanceReason,
+          });
 
-          const meetingStats = computeMeetingStats(dailyRecords, today);
-
-          if (pendingJobs.length > 0 || meetingStats.elapsedWeekdays > 0) {
-            clientReports.push({ clientName, pendingJobs, meetingStats });
+          if (!jobReadError && !dailyReadError) {
+            scannedClientCount++;
+            teamDiagnostic.clientsScanned++;
           }
+          console.log(`[dailyDigestEngine] Scanned "${clientName}" for "${podName}" in ${Date.now() - clientStartedAt}ms.`);
         } catch (clientErr) {
-          console.error(`[dailyDigestEngine] Failed to scan client "${clientName}" on pod "${podName}":`, clientErr.message);
+          const message = `Failed to scan client "${clientName}" on pod "${podName}": ${clientErr.message}`;
+          console.error(`[dailyDigestEngine] ${message}`);
+          teamDiagnostic.errors.push(message);
+          errors.push({ scope: 'client', podName, clientName, message });
+          try {
+            clientReports.push({
+              clientName,
+              pendingJobs: [],
+              meetingStats: getDefaultMeetingStats(),
+              scanReason: getScanFailureReason(clientErr),
+              attendanceReason: 'Daily meeting attendance could not be read because this brand scan failed.',
+            });
+          } catch {
+            // Keep scanning the remaining brands even if adding the failure row fails.
+          }
         }
       }
     } catch (teamErr) {
-      console.error(`[dailyDigestEngine] Failed to scan pod "${podName}":`, teamErr.message);
-      continue;
+      const message = `Failed to scan pod "${podName}": ${teamErr.message}`;
+      console.error(`[dailyDigestEngine] ${message}`);
+      teamDiagnostic.errors.push(message);
+      errors.push({ scope: 'team', podName, message });
+      clientReports.push({
+        clientName: `${podName} pod`,
+        pendingJobs: [],
+        meetingStats: getDefaultMeetingStats(),
+        scanReason: getScanFailureReason(teamErr),
+        attendanceReason: 'Daily meeting attendance could not be read because this pod could not be scanned.',
+      });
+    } finally {
+      teamDiagnostic.durationMs = Date.now() - teamStartedAt;
     }
 
     if (clientReports.length > 0) {
-      // Queue email to individual pod members
       podEmailsToSend.push({
         podName,
         to: recipients.to,
         clientReports,
       });
 
-      // Add to consolidated list with podName injected
       clientReports.forEach(report => {
         consolidatedReports.push({
           ...report,
@@ -276,48 +525,166 @@ export async function runDailyDigestCheck(sheets, overrideEmail = null) {
     }
   }
 
-  // If overrideEmail is provided, send only to that single email address
-  if (overrideEmail) {
-    if (consolidatedReports.length > 0) {
-      console.log(`[dailyDigestEngine] Sending single JSR report email to override recipient: ${overrideEmail}...`);
-      await sendPodDigestEmail({
-        podName: 'JSR Summary Report',
-        to: [overrideEmail],
-        cc: [],
-        clientReports: consolidatedReports,
-      });
-    } else {
-      console.log(`[dailyDigestEngine] No report data found for override recipient ${overrideEmail}.`);
-    }
-    console.log('[dailyDigestEngine] Daily digest check completed.');
-    return;
+  return {
+    dateKey: getSnapshotDateKey(today),
+    source,
+    timezone: SNAPSHOT_TIMEZONE,
+    generatedAt: new Date(),
+    month: today.getMonth(),
+    year: today.getFullYear(),
+    status: errors.length > 0 ? 'partial' : 'ready',
+    podEmailsToSend,
+    consolidatedReports,
+    managementRecipients: combinedCcList,
+    dashboardScores,
+    dashboardClients,
+    diagnostics,
+    errors,
+    summary: {
+      activeTeamCount: activeTeams.length,
+      scannedClientCount,
+      consolidatedClientCount: consolidatedReports.length,
+      dashboardScoreCount: Object.keys(dashboardScores).length,
+      errorCount: errors.length,
+      durationMs: Date.now() - startedAt,
+    },
+  };
+}
+
+export async function buildAndSaveDailyDigestSnapshot(sheets, options = {}) {
+  const payload = await buildDailyDigestPayload(sheets, options);
+  const snapshots = await getDailyDigestSnapshotsCollection();
+  const now = new Date();
+  const { dateKey } = payload;
+
+  await snapshots.updateOne(
+    { dateKey },
+    {
+      $set: {
+        ...payload,
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        createdAt: now,
+      },
+    },
+    { upsert: true }
+  );
+
+  const saved = await snapshots.findOne({ dateKey });
+  console.log(`[dailyDigestEngine] Saved daily snapshot ${dateKey}: ${payload.summary.dashboardScoreCount} score(s), ${payload.summary.consolidatedClientCount} digest client(s), ${payload.summary.errorCount} error(s).`);
+  return saved;
+}
+
+export async function getLatestDailyDigestSnapshot({ dateKey = getSnapshotDateKey(), allowLatestFallback = true } = {}) {
+  const snapshots = await getDailyDigestSnapshotsCollection();
+  const todaySnapshot = dateKey ? await snapshots.findOne({ dateKey }) : null;
+  if (todaySnapshot || !allowLatestFallback) return todaySnapshot;
+  return snapshots.find({}).sort({ generatedAt: -1 }).limit(1).next();
+}
+
+export async function sendManagementDigestFromSnapshot(snapshot, { to = null, force = false } = {}) {
+  if (!snapshot) {
+    console.warn('[dailyDigestEngine] No snapshot available for management digest.');
+    return false;
   }
 
-  // 1. Send pod-specific emails directly to team members (without CC to avoid duplicates)
-  for (const item of podEmailsToSend) {
+  const recipients = to
+    ? (Array.isArray(to) ? to : [to])
+    : (snapshot.managementRecipients || []);
+
+  if (!recipients.length) {
+    console.warn('[dailyDigestEngine] Snapshot has no management recipients. Email not sent.');
+    return false;
+  }
+
+  if (!snapshot.consolidatedReports || snapshot.consolidatedReports.length === 0) {
+    console.warn(`[dailyDigestEngine] Snapshot ${snapshot.dateKey} has no consolidated reports. Email not sent.`);
+    return false;
+  }
+
+  const normalizedRecipients = normalizeRecipients(recipients);
+  const signature = getManagementDigestSignature(snapshot, normalizedRecipients);
+  const sentDigests = snapshot.sentManagementDigests || [];
+  const alreadySent = sentDigests.some(item => item?.signature === signature);
+
+  if (alreadySent && !force) {
+    console.warn(`[dailyDigestEngine] Management digest ${snapshot.dateKey} already sent to ${normalizedRecipients.join(', ')} with this content. Skipping duplicate send.`);
+    return { sent: false, skipped: true, reason: 'duplicate', signature };
+  }
+
+  console.log(`[dailyDigestEngine] Sending management digest from snapshot ${snapshot.dateKey} to ${normalizedRecipients.join(', ')}...`);
+  const ok = await sendPodDigestEmail({
+    podName: 'All Teams Summary',
+    to: normalizedRecipients,
+    cc: [],
+    clientReports: snapshot.consolidatedReports,
+  });
+
+  if (!ok) return { sent: false, skipped: false, reason: 'email_failed', signature };
+
+  const snapshots = await getDailyDigestSnapshotsCollection();
+  await snapshots.updateOne(
+    { _id: snapshot._id },
+    {
+      $push: {
+        sentManagementDigests: {
+          signature,
+          recipients: normalizedRecipients,
+          sentAt: new Date(),
+          forced: Boolean(force),
+        },
+      },
+      $set: { updatedAt: new Date() },
+    }
+  );
+
+  return { sent: true, skipped: false, signature };
+}
+
+export async function sendManagementDigestFromLatestSnapshot(options = {}) {
+  const snapshot = await getLatestDailyDigestSnapshot(options);
+  return sendManagementDigestFromSnapshot(snapshot, options);
+}
+
+export async function sendPodDigestsFromSnapshot(snapshot) {
+  if (!snapshot?.podEmailsToSend?.length) {
+    console.log('[dailyDigestEngine] Snapshot has no POD digest emails to send.');
+    return [];
+  }
+
+  const results = [];
+  for (const item of snapshot.podEmailsToSend) {
     console.log(`[dailyDigestEngine] Sending individual pod digest email for pod "${item.podName}" (${item.clientReports.length} client(s))...`);
-    await sendPodDigestEmail({
+    const success = await sendPodDigestEmail({
       podName: item.podName,
       to: item.to,
       cc: [],
       clientReports: item.clientReports,
     });
+    results.push({ podName: item.podName, success });
+  }
+  return results;
+}
+
+/**
+ * Backward-compatible manual digest runner. It now builds/saves a snapshot
+ * first, then sends email from that saved snapshot.
+ */
+export async function runDailyDigestCheck(sheets, overrideEmail = null) {
+  console.log(`[dailyDigestEngine] Starting daily digest check${overrideEmail ? ` (override recipient: ${overrideEmail})` : ''}...`);
+  const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'legacy-digest-check' });
+
+  if (overrideEmail) {
+    await sendManagementDigestFromSnapshot(snapshot, { to: overrideEmail });
+    console.log('[dailyDigestEngine] Daily digest check completed.');
+    return snapshot;
   }
 
-  // 2. Send a single consolidated email to management (CC) recipients
-  if (consolidatedReports.length > 0 && combinedCcList.length > 0) {
-    console.log(`[dailyDigestEngine] Sending single consolidated daily digest email to CC list (${consolidatedReports.length} total client(s))...`);
-    await sendPodDigestEmail({
-      podName: 'All Teams Summary',
-      to: combinedCcList,
-      cc: [],
-      clientReports: consolidatedReports,
-    });
-  } else {
-    console.log('[dailyDigestEngine] No consolidated daily digest data or CC recipients found.');
-  }
-
+  await sendPodDigestsFromSnapshot(snapshot);
+  await sendManagementDigestFromSnapshot(snapshot);
   console.log('[dailyDigestEngine] Daily digest check completed.');
+  return snapshot;
 }
 
 /**
@@ -382,62 +749,85 @@ export async function runDigestForPods(sheets, podNames = []) {
         try {
           const isPanasonic = (clientName || '').toLowerCase().includes('panasonic');
 
-          const [rawJobs, rawDaily] = await Promise.all([
-            getSheetData(sheets, team.jobId, clientName),
-            getSheetData(sheets, team.dailyId, clientName),
-          ]);
+          let rawJobs = null;
+          let rawDaily = null;
+          let jobReadError = null;
+          let dailyReadError = null;
 
-          const jobs = parseJobTrackerRows(rawJobs, clientName, isPanasonic);
-          const pendingJobs = [];
-
-          for (const job of jobs) {
-            const priority = (job.priority || '').toString().trim().toUpperCase();
-            if (priority !== 'L' && priority !== 'XL' && priority !== 'XXL') continue;
-
-            const status = (job.status || '').toString().trim().toLowerCase();
-            if (status === 'closed' || status === 'completed') continue;
-
-            if (!job.clientTimeline || !(job.clientTimeline instanceof Date) || isNaN(job.clientTimeline.getTime())) continue;
-
-            const timelineMidnight = toMidnight(job.clientTimeline);
-            const diffDays = Math.round((timelineMidnight.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
-
-            const isDueToday = (diffDays === 0);
-            const isOverdueXLOrXXL = (diffDays < 0 && (priority === 'XL' || priority === 'XXL') && status === 'in progress');
-
-            if (!isDueToday && !isOverdueXLOrXXL) continue;
-
-            const dueLabel = isDueToday ? 'Today' : `Overdue (${Math.abs(diffDays)}d)`;
-
-            pendingJobs.push({
-              jobId: job.jobId,
-              deliverable: job.deliverable || job.jobId,
-              priority,
-              dueDate: job.clientTimeline.toISOString().split('T')[0],
-              dueLabel,
-              isPanasonic,
-            });
-          }
-
-          let dailyRecords = [];
           try {
-            dailyRecords = parseDailyTrackerRows(rawDaily, clientName);
-          } catch (dailyErr) {
-            console.error(`[dailyDigestEngine] Failed to parse Daily Tracker for "${clientName}":`, dailyErr.message);
+            rawJobs = await getSheetData(sheets, team.jobId, clientName, jobTabs);
+          } catch (err) {
+            jobReadError = err;
           }
 
-          const meetingStats = computeMeetingStats(dailyRecords, today);
-
-          if (pendingJobs.length > 0 || meetingStats.elapsedWeekdays > 0) {
-            clientReports.push({ clientName, pendingJobs, meetingStats });
+          try {
+            rawDaily = await getSheetData(sheets, team.dailyId, clientName, dailyTabs);
+          } catch (err) {
+            dailyReadError = err;
           }
+
+          let pendingJobs = [];
+          let dailyRecords = [];
+          let meetingStats = getDefaultMeetingStats();
+          let scanReason = null;
+          let attendanceReason = null;
+
+          if (jobReadError) {
+            scanReason = getScanFailureReason(jobReadError);
+            console.error(`[dailyDigestEngine] Failed to read Job Tracker for "${clientName}" on pod "${podName}":`, jobReadError.message);
+          } else {
+            let jobs = parseJobTrackerRows(rawJobs, clientName, isPanasonic);
+            try {
+              jobs = await syncJobStatusAging(clientName, jobs);
+            } catch (err) {
+              console.warn(`[dailyDigestEngine] Status aging sync failed for "${clientName}": ${err.message}`);
+            }
+            pendingJobs = buildPendingJobs(jobs, today).map(job => ({ ...job, isPanasonic }));
+          }
+
+          if (dailyReadError) {
+            attendanceReason = getScanFailureReason(dailyReadError);
+            meetingStats = { ...getDefaultMeetingStats(), reason: attendanceReason };
+            console.error(`[dailyDigestEngine] Failed to read Daily Tracker for "${clientName}" on pod "${podName}":`, dailyReadError.message);
+          } else {
+            try {
+              dailyRecords = parseDailyTrackerRows(rawDaily, clientName);
+              meetingStats = computeMeetingStats(dailyRecords, today);
+            } catch (dailyErr) {
+              attendanceReason = `Could not parse daily meeting tracker: ${dailyErr.message}`;
+              meetingStats = { ...getDefaultMeetingStats(), reason: attendanceReason };
+              console.error(`[dailyDigestEngine] Failed to parse Daily Tracker for "${clientName}":`, dailyErr.message);
+            }
+          }
+
+          clientReports.push({
+            clientName,
+            pendingJobs,
+            meetingStats,
+            noDeadlineReason: !jobReadError && pendingJobs.length === 0 ? getNoDeadlineReason() : '',
+            scanReason,
+            attendanceReason,
+          });
         } catch (clientErr) {
           console.error(`[dailyDigestEngine] Failed to scan client "${clientName}" on pod "${podName}":`, clientErr.message);
+          clientReports.push({
+            clientName,
+            pendingJobs: [],
+            meetingStats: getDefaultMeetingStats(),
+            scanReason: getScanFailureReason(clientErr),
+            attendanceReason: 'Daily meeting attendance could not be read because this brand scan failed.',
+          });
         }
       }
     } catch (teamErr) {
       console.error(`[dailyDigestEngine] Failed to scan pod "${podName}":`, teamErr.message);
-      continue;
+      clientReports.push({
+        clientName: `${podName} pod`,
+        pendingJobs: [],
+        meetingStats: getDefaultMeetingStats(),
+        scanReason: getScanFailureReason(teamErr),
+        attendanceReason: 'Daily meeting attendance could not be read because this pod could not be scanned.',
+      });
     }
 
     if (clientReports.length > 0) {
