@@ -1,13 +1,41 @@
 /**
  * emailService.js
- * Sends alert emails via Brevo (formerly Sendinblue) transactional email REST API.
- * Uses native fetch (Node 18+) — no SMTP, no domain verification needed.
- * Only requires a verified SENDER email address in the Brevo dashboard.
+ * Sends alert emails via Gmail SMTP using Nodemailer.
+ * Sender: ahtcog@cogculture.agency
  */
 
+import nodemailer from 'nodemailer';
 import { getTeamsCollection } from './db.js';
 
-const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
+let _transporter = null;
+
+function getTransporter() {
+  if (_transporter) return _transporter;
+
+  const user = process.env.SMTP_USER || 'ahtcog@cogculture.agency';
+  const pass = (process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, '');
+
+  if (!pass) {
+    console.warn('[emailService] SMTP_PASS / GMAIL_APP_PASSWORD not set. Skipping email delivery.');
+    return null;
+  }
+
+  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = Number(process.env.SMTP_PORT) || 465;
+  const secure = process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE === 'true' : port === 465;
+
+  _transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: {
+      user,
+      pass,
+    },
+  });
+
+  return _transporter;
+}
 
 /**
  * Escapes HTML special characters in a string to prevent HTML/XSS injection.
@@ -22,42 +50,60 @@ function escapeHTML(str) {
     .replace(/'/g, '&#39;');
 }
 
-function parseSender(fromStr, fallbackName) {
-  if (!fromStr) return { email: 'lakshbhatia134@gmail.com', name: fallbackName || 'JSR Report Alerts' };
-  const match = fromStr.match(/^(?:"?([^"<]+)"?\s*)?<([^>]+)>$/);
-  if (match) {
-    return { name: match[1]?.trim() || fallbackName || 'JSR Report Alerts', email: match[2].trim() };
+function formatAddressList(addresses) {
+  if (!addresses) return [];
+  if (typeof addresses === 'string') {
+    return addresses.split(',').map(s => s.trim()).filter(Boolean);
   }
-  return { email: fromStr.trim(), name: fallbackName || 'JSR Report Alerts' };
+  if (Array.isArray(addresses)) {
+    return addresses.map(addr => {
+      if (typeof addr === 'string') return addr.trim();
+      if (addr && addr.email) {
+        return addr.name ? `"${addr.name}" <${addr.email}>` : addr.email;
+      }
+      return null;
+    }).filter(Boolean);
+  }
+  return [];
 }
 
-async function sendViaBrevo({ apiKey, fromEmail, fromName, toAddresses, ccAddresses, subject, html }) {
+export async function sendViaSmtp({ from, fromEmail, fromName, toAddresses, ccAddresses, subject, html }) {
   if (process.env.DISABLE_EMAILS === 'true' || process.env.ENABLE_EMAILS === 'false') {
     console.warn('[emailService] Email triggers are currently paused (DISABLE_EMAILS=true). Email not sent.');
     return false;
   }
-  const senderObj = parseSender(fromEmail, fromName);
-  const res = await fetch(BREVO_API_URL, {
-    method: 'POST',
-    headers: {
-      'accept': 'application/json',
-      'api-key': apiKey,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      sender: senderObj,
-      to: toAddresses,
-      ...(ccAddresses && ccAddresses.length > 0 ? { cc: ccAddresses } : {}),
-      subject,
-      htmlContent: html,
-    }),
-  });
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    console.error('[emailService] Brevo error response:', body);
-    throw new Error(body.message || `HTTP ${res.status}`);
+  const transporter = getTransporter();
+  if (!transporter) {
+    return false;
   }
+
+  const defaultFrom = process.env.SMTP_FROM || 'Account Health Tracker <ahtcog@cogculture.agency>';
+  let fromHeader = defaultFrom;
+  if (from) {
+    fromHeader = from;
+  } else if (fromEmail) {
+    fromHeader = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
+  }
+
+  const toList = formatAddressList(toAddresses);
+  const ccList = formatAddressList(ccAddresses);
+
+  if (toList.length === 0) {
+    console.warn('[emailService] No recipient addresses provided. Email not sent.');
+    return false;
+  }
+
+  const mailOptions = {
+    from: fromHeader,
+    to: toList.join(', '),
+    ...(ccList.length > 0 ? { cc: ccList.join(', ') } : {}),
+    subject,
+    html,
+  };
+
+  const info = await transporter.sendMail(mailOptions);
+  console.log(`[emailService] Email sent successfully via Gmail SMTP. MessageId: ${info.messageId}`);
   return true;
 }
 
@@ -66,13 +112,8 @@ async function sendViaBrevo({ apiKey, fromEmail, fromName, toAddresses, ccAddres
  * (as opposed to the fixed MANAGEMENT_EMAIL list used by alert emails).
  */
 function buildTransportForRecipients(toEmails, ccEmails) {
-  const apiKey = process.env.BREVO_API_KEY;
-  const fromEmailRaw = process.env.SMTP_FROM || 'geo@cogculture.agency';
+  const fromEmailRaw = process.env.SMTP_FROM || 'Account Health Tracker <ahtcog@cogculture.agency>';
 
-  if (!apiKey) {
-    console.warn('[emailService] BREVO_API_KEY not set. Skipping email delivery.');
-    return null;
-  }
   let targetToEmails = toEmails || [];
   let targetCcEmails = ccEmails || [];
 
@@ -88,7 +129,7 @@ function buildTransportForRecipients(toEmails, ccEmails) {
 
   // Parse fromEmailRaw which might be of the format "Name <email>"
   const match = fromEmailRaw.match(/^(.*?)\s*<([^>]+)>/);
-  const fromName = match ? match[1].trim() : 'JSR Report Alerts';
+  const fromName = match ? match[1].trim() : 'Account Health Tracker';
   const fromEmail = match ? match[2].trim() : fromEmailRaw.trim();
 
   // Test mode override: send to MANAGEMENT_EMAIL instead of original recipients
@@ -104,13 +145,13 @@ function buildTransportForRecipients(toEmails, ccEmails) {
   }
 
   return {
-    apiKey,
     fromEmail,
     fromName,
-    toAddresses: targetToEmails.map(e => ({ email: e })),
-    ccAddresses: (targetCcEmails || []).map(e => ({ email: e })),
+    toAddresses: targetToEmails.map(e => (typeof e === 'string' ? { email: e } : e)),
+    ccAddresses: (targetCcEmails || []).map(e => (typeof e === 'string' ? { email: e } : e)),
   };
 }
+
 
 /**
  * Generates the HTML template and subject for the daily executive digest:
@@ -441,9 +482,11 @@ export async function sendPodDigestEmail({ podName, to, cc, clientReports }) {
   const { subject, html } = buildExecutiveDigestEmailHtml(clientReports, podName);
 
   try {
-    await sendViaBrevo({ ...transport, subject, html });
-    console.log(`[emailService] Daily digest email sent for pod "${podName}" to ${transport.toAddresses.map(a => a.email).join(', ')}.`);
-    return true;
+    const ok = await sendViaSmtp({ ...transport, subject, html });
+    if (ok) {
+      console.log(`[emailService] Daily digest email sent for pod "${podName}" to ${transport.toAddresses.map(a => a.email || a).join(', ')}.`);
+    }
+    return ok;
   } catch (err) {
     console.error(`[emailService] Failed to send daily digest email for pod "${podName}":`, err.message);
     return false;
@@ -451,13 +494,7 @@ export async function sendPodDigestEmail({ podName, to, cc, clientReports }) {
 }
 
 export async function sendDailyReminderEmail() {
-  const apiKey = process.env.BREVO_API_KEY;
-  const fromEmail = process.env.SMTP_FROM || 'geo@cogculture.agency';
-
-  if (!apiKey) {
-    console.warn('[emailService] BREVO_API_KEY not set. Skipping reminder email.');
-    return false;
-  }
+  const fromEmail = process.env.SMTP_FROM || 'Account Health Tracker <ahtcog@cogculture.agency>';
 
   let teams = [];
   try {
@@ -528,16 +565,17 @@ export async function sendDailyReminderEmail() {
   `;
 
   try {
-    await sendViaBrevo({
-      apiKey,
+    const ok = await sendViaSmtp({
       fromEmail,
       fromName: 'JSR & Meeting Reminder',
       toAddresses: [{ email: 'apoorv@cogculture.agency', name: 'Apoorv' }],
       subject: 'Daily Reminder: Update JSR and Meeting Tracker',
       html
     });
-    console.log('[emailService] Daily 11:30 AM reminder email sent successfully to apoorv@cogculture.agency.');
-    return true;
+    if (ok) {
+      console.log('[emailService] Daily 11:30 AM reminder email sent successfully to apoorv@cogculture.agency.');
+    }
+    return ok;
   } catch (err) {
     console.error('[emailService] Failed to send reminder email:', err.message);
     return false;

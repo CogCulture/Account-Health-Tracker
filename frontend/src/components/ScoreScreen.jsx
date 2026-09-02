@@ -1,15 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Calendar, Download, Bookmark, BookmarkCheck, ChevronRight, RefreshCw, AlertTriangle, X, UserCheck, Layers, Briefcase } from 'lucide-react';
 import Chart from 'chart.js/auto';
 import { generateHealthReportPDF } from '../utils/pdfGenerator';
 import ParameterDrawer from './ParameterDrawer';
+import { computeInternalMeetingMetrics } from '../utils/meetingMatcher';
+import { fetchMeetingInsights } from '../utils/meetingsApi';
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, onSaveSuccess, onReload }) {
+export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, onSaveSuccess, onReload, meetings = [] }) {
   const { clientName, month, year, scores, metrics, rating, badgeColor, badgeText, ratingBand, insights, solutions, escalationCount, pendingLargeJobs } = scoreData;
   const monthName = MONTH_NAMES[month];
 
@@ -27,6 +29,34 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
   const [showPendingJobsModal, setShowPendingJobsModal] = useState(false);
   const [showEscalationsModal, setShowEscalationsModal] = useState(false);
   const [showAssignedModal, setShowAssignedModal] = useState(false);
+  const [internalMeetingsList, setInternalMeetingsList] = useState(meetings);
+
+  useEffect(() => {
+    if (meetings && meetings.length > 0) {
+      setInternalMeetingsList(meetings);
+    } else {
+      fetchMeetingInsights()
+        .then(data => {
+          if (Array.isArray(data)) setInternalMeetingsList(data);
+        })
+        .catch(err => console.warn('[ScoreScreen] Could not fetch meeting insights:', err.message));
+    }
+  }, [meetings]);
+
+  const internalMeetingMetrics = useMemo(() => {
+    return computeInternalMeetingMetrics(
+      internalMeetingsList,
+      clientName,
+      month !== undefined ? month : new Date().getMonth(),
+      year !== undefined ? year : new Date().getFullYear(),
+      metrics?.p1?.totalWorkingDays
+    );
+  }, [internalMeetingsList, clientName, month, year, metrics?.p1?.totalWorkingDays]);
+
+  // Ensure internalMeeting metric is attached for ParameterDrawer
+  if (metrics) {
+    metrics.internalMeeting = internalMeetingMetrics;
+  }
 
   const assignedPersons = scoreData.assignedPersons || [];
 
@@ -451,7 +481,7 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
   }, [scoreData, allClientScores]);
 
   // Clickable parameter card
-  const ParamCard = ({ id, title, sub, score }) => {
+  const ParamCard = ({ id, title, sub, score, style = {} }) => {
     const statPills = [];
     if (id === 'p1') {
       if (!isNoInPersonBrand) {
@@ -468,6 +498,11 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
       statPills.push({ label: 'Initiative Approved', value: metrics.p4.proactiveDetails.initPaidApproved });
       statPills.push({ label: 'Initiative Unapproved', value: metrics.p4.proactiveDetails.initPaidUnapproved });
     }
+    if (id === 'internal_meeting') {
+      const im = metrics.internalMeeting || internalMeetingMetrics;
+      statPills.push({ label: 'Meetings conducted', value: `${im.attendedDays} days` });
+      statPills.push({ label: 'Attendance rate', value: `${Math.round(im.attendanceRate)}%` });
+    }
 
     return (
       <div
@@ -477,6 +512,7 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
         tabIndex={0}
         onKeyDown={e => e.key === 'Enter' && setOpenParam(id)}
         title={`Click to view ${title} details`}
+        style={style}
       >
         <div>
           <div className="parameter-top">
@@ -501,16 +537,9 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
 
         {/* Stat pills */}
         {statPills.length > 0 && (
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+          <div className="parameter-pills-row">
             {statPills.map((s, i) => (
-              <div key={i} style={{
-                flex: 1,
-                padding: '0.45rem 0.75rem',
-                borderRadius: 8,
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid var(--card-border)',
-                textAlign: 'center',
-              }}>
+              <div key={i} className="parameter-pill-item">
                 <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1 }}>{s.value}</div>
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{s.label}</div>
               </div>
@@ -531,19 +560,14 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
           });
           const sorted = ['XXL', 'XL'].filter(p => priMap[p]);
           return (
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+            <div className="parameter-pills-row">
               {sorted.map(p => {
                 const { total, onTime } = priMap[p];
                 const rate = Math.round((onTime / total) * 100);
                 const color = rate < 85 ? '#EF4444' : 'var(--text-primary)';
                 return (
-                  <div key={p} style={{
-                    flex: 1,
-                    padding: '0.45rem 0.75rem',
-                    borderRadius: 8,
-                    background: 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${rate < 85 ? 'rgba(239,68,68,0.3)' : 'var(--card-border)'}`,
-                    textAlign: 'center',
+                  <div key={p} className="parameter-pill-item" style={{
+                    borderColor: rate < 85 ? 'rgba(239,68,68,0.3)' : 'var(--card-border)'
                   }}>
                     <div style={{ fontSize: '1.1rem', fontWeight: 700, color, lineHeight: 1 }}>{rate}%</div>
                     <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{p} on-time</div>
@@ -556,13 +580,9 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
                   if (escalationCount > 0) setShowEscalationsModal(true);
                 }}
                 disabled={escalationCount === 0}
+                className="parameter-pill-item"
                 style={{
-                  flex: 1,
-                  padding: '0.45rem 0.75rem',
-                  borderRadius: 8,
-                  background: 'rgba(255,255,255,0.04)',
-                  border: `1px solid ${escalationCount > 0 ? 'rgba(239,68,68,0.3)' : 'var(--card-border)'}`,
-                  textAlign: 'center',
+                  borderColor: escalationCount > 0 ? 'rgba(239,68,68,0.3)' : 'var(--card-border)',
                   cursor: escalationCount > 0 ? 'pointer' : 'default',
                   transition: 'all 0.2s ease',
                   outline: 'none',
@@ -743,10 +763,11 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
         </div>
       </div>
 
-      <div className="score-summary-grid">
-        {/* Gauge */}
+      {/* ── 1. Top Section: Relationship Health (aligned height) + 4 Parameter Boxes (2x2) ── */}
+      <div className="top-dashboard-grid">
+        {/* Gauge Card (Height stretch-aligned with the 4 boxes on the right) */}
         <div className="glass-card radial-score-container" style={{ borderColor: badgeColor, boxShadow: `0 8px 32px 0 ${badgeColor}1a` }}>
-          <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1.5rem', fontWeight: 600 }}>
+          <h3 style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1.2px', marginBottom: '1rem', fontWeight: 700 }}>
             Relationship Health
           </h3>
           <div className="gauge-wrapper">
@@ -784,7 +805,7 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
               background: 'var(--bg-tertiary)',
               border: '1px solid var(--card-border)',
               color: 'var(--text-secondary)',
-              fontSize: '0.82rem',
+              fontSize: '0.85rem',
               fontWeight: 600,
               cursor: 'pointer',
               display: 'flex',
@@ -799,111 +820,117 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
           </button>
         </div>
 
-        {/* 4 Parameter Cards */}
+        {/* 4 Parameter Cards in 2x2 grid */}
         <div className="parameters-grid">
           <ParamCard id="p1" title="JSR Calling" sub={isNoInPersonBrand ? "Daily JSR call attendance" : "In-person meetings + daily attendance"} score={scores.p1} />
           <ParamCard id="p2" title="Delivery Date" sub="Ratio of on-time closed deliverables" score={scores.p2} />
           <ParamCard id="p3" title="Cross-Functional Meeting" sub="Creative & Management attendances" score={scores.p3} />
-          <ParamCard id="p4" title="Proactiveness" sub="Initiative task index" score={scores.p4} />
+          <ParamCard id="internal_meeting" title="Internal Meeting" sub="Daily internal syncs & attendees" score={internalMeetingMetrics.score} />
         </div>
       </div>
 
-      {/* ── Job Types Breakdown Section ─────────────────────────────────── */}
-      <div className="glass-card" style={{ marginBottom: '2.5rem', padding: '1.5rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-            <div style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', padding: '0.5rem', borderRadius: '10px', color: '#3B82F6' }}>
-              <Layers size={20} />
+      {/* ── 2. Middle Section: Proactiveness & Deliverables This Month ── */}
+      <div className="mid-dashboard-grid">
+        {/* Proactiveness Box */}
+        <ParamCard id="p4" title="Proactiveness" sub="Initiative task index" score={scores.p4} />
+
+        {/* Deliverables This Month Section */}
+        <div className="glass-card" style={{ padding: '1.6rem 1.75rem', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+              <div style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', padding: '0.5rem', borderRadius: '10px', color: '#3B82F6' }}>
+                <Layers size={20} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  DELIVERABLES THIS MONTH
+                </h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.15rem 0 0 0' }}>
+                  Deliverable counts grouped by category for {monthName} {year}
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                DELIVERABLES THIS MONTH
-              </h3>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.15rem 0 0 0' }}>
-                Deliverable counts grouped by category for {monthName} {year}
-              </p>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <span style={{
+                fontSize: '0.8rem', fontWeight: 700,
+                padding: '0.35rem 0.85rem', borderRadius: '20px',
+                backgroundColor: 'rgba(59, 130, 246, 0.12)', color: '#3B82F6',
+                border: '1px solid rgba(59, 130, 246, 0.25)'
+              }}>
+                Total Deliverables: {(metrics?.p2?.allMonthJobs || metrics?.p2?.jobs || []).length}
+              </span>
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{
-              fontSize: '0.8rem', fontWeight: 700,
-              padding: '0.35rem 0.85rem', borderRadius: '20px',
-              backgroundColor: 'rgba(59, 130, 246, 0.12)', color: '#3B82F6',
-              border: '1px solid rgba(59, 130, 246, 0.25)'
-            }}>
-              Total Deliverables: {(metrics?.p2?.allMonthJobs || metrics?.p2?.jobs || []).length}
-            </span>
-          </div>
-        </div>
+          {/* Job Type Grid */}
+          {(() => {
+            const monthJobs = metrics?.p2?.allMonthJobs || metrics?.p2?.jobs || [];
+            if (!monthJobs || monthJobs.length === 0) {
+              return (
+                <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  No deliverables recorded in JSR sheet for {monthName} {year}.
+                </div>
+              );
+            }
 
-        {/* Job Type Grid */}
-        {(() => {
-          const monthJobs = metrics?.p2?.allMonthJobs || metrics?.p2?.jobs || [];
-          if (!monthJobs || monthJobs.length === 0) {
+            const countsMap = monthJobs.reduce((acc, job) => {
+              const type = (job.jobType || 'Others').trim() || 'Others';
+              acc[type] = (acc[type] || 0) + 1;
+              return acc;
+            }, {});
+
+            const sortedTypes = Object.entries(countsMap).sort((a, b) => {
+              if (a[0].toLowerCase() === 'others') return 1;
+              if (b[0].toLowerCase() === 'others') return -1;
+              return b[1] - a[1];
+            });
+
             return (
-              <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                No deliverables recorded in JSR sheet for {monthName} {year}.
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                gap: '0.85rem'
+              }}>
+                {sortedTypes.map(([type, count]) => {
+                  const total = monthJobs.length;
+                  const pct = Math.round((count / total) * 100);
+                  return (
+                    <div key={type} style={{
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid var(--card-border)',
+                      borderRadius: '12px',
+                      padding: '0.85rem 1rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.35rem',
+                      transition: 'all 0.2s ease'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+                          {type}
+                        </span>
+                        <span style={{
+                          fontSize: '0.85rem', fontWeight: 800,
+                          color: '#3B82F6', background: 'rgba(59, 130, 246, 0.12)',
+                          padding: '0.15rem 0.5rem', borderRadius: '6px'
+                        }}>
+                          {count}
+                        </span>
+                      </div>
+                      <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden', marginTop: '0.2rem' }}>
+                        <div style={{ width: `${pct}%`, height: '100%', background: '#3B82F6', borderRadius: '2px' }} />
+                      </div>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                        {pct}% of month deliverables
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             );
-          }
-
-          const countsMap = monthJobs.reduce((acc, job) => {
-            const type = (job.jobType || 'Others').trim() || 'Others';
-            acc[type] = (acc[type] || 0) + 1;
-            return acc;
-          }, {});
-
-          const sortedTypes = Object.entries(countsMap).sort((a, b) => {
-            if (a[0].toLowerCase() === 'others') return 1;
-            if (b[0].toLowerCase() === 'others') return -1;
-            return b[1] - a[1];
-          });
-
-          return (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-              gap: '0.85rem'
-            }}>
-              {sortedTypes.map(([type, count]) => {
-                const total = monthJobs.length;
-                const pct = Math.round((count / total) * 100);
-                return (
-                  <div key={type} style={{
-                    background: 'rgba(255, 255, 255, 0.03)',
-                    border: '1px solid var(--card-border)',
-                    borderRadius: '12px',
-                    padding: '0.85rem 1rem',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.35rem',
-                    transition: 'all 0.2s ease'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
-                        {type}
-                      </span>
-                      <span style={{
-                        fontSize: '0.85rem', fontWeight: 800,
-                        color: '#3B82F6', background: 'rgba(59, 130, 246, 0.12)',
-                        padding: '0.15rem 0.5rem', borderRadius: '6px'
-                      }}>
-                        {count}
-                      </span>
-                    </div>
-                    <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden', marginTop: '0.2rem' }}>
-                      <div style={{ width: `${pct}%`, height: '100%', background: '#3B82F6', borderRadius: '2px' }} />
-                    </div>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                      {pct}% of month deliverables
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })()}
+          })()}
+        </div>
       </div>
 
       {/* ── Charts Grid Section ───────────────────────────── */}

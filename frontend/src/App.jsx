@@ -10,6 +10,7 @@ import { fetchDailyDigestSnapshot, fetchSheetData, fetchSheetTabs } from './util
 import { apiUrl } from './utils/apiClient';
 import { parseDailyTrackerRows, parseJobTrackerRows, getCommonClientTabs, parseAssignedPersons } from './utils/sheetsParser';
 import { calculateHealthScore } from './utils/scoreEngine';
+import { fetchMeetingInsights } from './utils/meetingsApi';
 import { RefreshCw, BarChart3, Settings } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
@@ -50,6 +51,17 @@ export default function App() {
   const [scoreData, setScoreData] = useState(null);
   const [calcStatus, setCalcStatus] = useState('idle'); // idle | loading | error
   const [calcError, setCalcError] = useState('');
+
+  // Meetings insights for internal meetings computation
+  const [meetings, setMeetings] = useState([]);
+
+  useEffect(() => {
+    fetchMeetingInsights()
+      .then(data => {
+        if (Array.isArray(data)) setMeetings(data);
+      })
+      .catch(err => console.warn('[App] Could not load meetings:', err.message));
+  }, []);
 
   // Full result cache for overview cards & trend graphs (persisted in localStorage)
   const [clientFullData, setClientFullData] = useState(() => loadPersistentCache());
@@ -332,6 +344,11 @@ export default function App() {
 
   const handleReload = useCallback(async () => {
     setCalcStatus('loading');
+    fetchMeetingInsights()
+      .then(data => {
+        if (Array.isArray(data)) setMeetings(data);
+      })
+      .catch(err => console.warn('[App] Could not reload meetings:', err.message));
     const clientsPromise = loadClients();
     if (selectedClient) {
       const clientEntry = clients.find(c => c.key === selectedClient);
@@ -518,6 +535,7 @@ export default function App() {
                   onReset={() => { setScoreData(null); setSelectedClient(null); setView('overview'); }}
                   onSaveSuccess={() => window.dispatchEvent(new Event('storage'))}
                   onReload={handleReload}
+                  meetings={meetings}
                 />
               </div>
             )}

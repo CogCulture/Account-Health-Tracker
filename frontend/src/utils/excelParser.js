@@ -369,7 +369,8 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
     closingDate: -1,
     timelineStatus: -1,
     priority: -1,
-    clientAlteration: -1
+    clientAlteration: -1,
+    agencyAlteration: -1
   };
 
   headers.forEach((h, idx) => {
@@ -384,7 +385,8 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
     if (txt.includes('closing date') || txt.includes('job closing date') || txt === 'closing_date') colMap.closingDate = idx;
     if (txt === 'timeline status') colMap.timelineStatus = idx;
     if (txt === 'priority' || txt === 'prority') colMap.priority = idx;
-    if (txt.includes('client alteration') || txt.includes('client_alteration') || txt.includes('alteration') || txt.includes('client revert') || txt === 'reverts') colMap.clientAlteration = idx;
+    if (txt.includes('agency alteration') || txt.includes('agency_alteration') || txt.includes('internal alteration') || txt.includes('agency revert') || txt === 'agency reverts' || txt === 'atr') colMap.agencyAlteration = idx;
+    if (txt.includes('client alteration') || txt.includes('client_alteration') || txt.includes('alteration') || txt.includes('client revert') || txt === 'reverts' || txt === 'client reverts' || txt === 'ctr') colMap.clientAlteration = idx;
   });
 
   const records = [];
@@ -436,6 +438,26 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
       }
     }
 
+    let agencyAlterations = 0;
+    if (colMap.agencyAlteration !== -1 && row[colMap.agencyAlteration] != null) {
+      const val = row[colMap.agencyAlteration];
+      if (typeof val === 'number') {
+        agencyAlterations = val;
+      } else if (typeof val === 'boolean') {
+        agencyAlterations = val ? 1 : 0;
+      } else {
+        const str = val.toString().trim();
+        const num = parseInt(str, 10);
+        if (!isNaN(num)) {
+          agencyAlterations = num;
+        } else if (str.toLowerCase() === 'true' || str.toLowerCase() === 'yes' || str.toLowerCase() === 'y') {
+          agencyAlterations = 1;
+        } else {
+          agencyAlterations = str ? 1 : 0;
+        }
+      }
+    }
+
     records.push({
       jobId,
       deliverable,
@@ -447,7 +469,8 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
       deliveryDate,
       closingDate,
       priority,
-      clientAlterations
+      clientAlterations,
+      agencyAlterations
     });
   }
 

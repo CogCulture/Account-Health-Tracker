@@ -44,7 +44,33 @@ export async function syncFathomMeetings() {
 }
 
 /**
- * Fetches all stored meeting insights (both sources), most recent first.
+ * Triggers a sync of Granola meeting notes from Gmail.
+ * @returns {Promise<{ newMeetingsProcessed: number, meetings: object[] }>}
+ */
+export async function syncGmailMeetings() {
+  const res = await fetch(apiUrl('/api/meetings/gmail/sync'), { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `Granola sync failed (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
+/**
+ * Checks Gmail connection status.
+ * @returns {Promise<{ configured: boolean, connected: boolean, userEmail: string|null }>}
+ */
+export async function fetchGmailStatus() {
+  const res = await fetch(apiUrl('/api/meetings/gmail/status'));
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `Failed to fetch Gmail status (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
+/**
+ * Fetches all stored meeting insights (all sources), most recent first.
  * @returns {Promise<object[]>}
  */
 export async function fetchMeetingInsights() {

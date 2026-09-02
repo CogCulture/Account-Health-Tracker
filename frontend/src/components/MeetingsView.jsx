@@ -1,11 +1,12 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   Mic, Upload, RefreshCw, AlertCircle, Users, Briefcase,
-  FileText, Cloud, Paperclip, ChevronDown, ChevronUp,
+  FileText, Paperclip, ChevronDown, ChevronUp,
+  Mail, CheckCircle2,
 } from 'lucide-react';
-import { uploadMeetingAudio, syncFathomMeetings, fetchMeetingInsights } from '../utils/meetingsApi';
+import { uploadMeetingAudio, syncGmailMeetings, fetchGmailStatus, fetchMeetingInsights } from '../utils/meetingsApi';
 
-const SOURCE_LABEL = { fathom: 'Fathom', upload: 'Uploaded' };
+const SOURCE_LABEL = { upload: 'Uploaded', granola: 'Granola (Gmail)', 'chrome-extension': 'Live Extension' };
 
 export default function MeetingsView() {
   const [meetings, setMeetings] = useState([]);
@@ -17,9 +18,10 @@ export default function MeetingsView() {
   const [uploadStatus, setUploadStatus] = useState('idle'); // idle | uploading | error
   const [uploadError, setUploadError] = useState('');
 
-  const [syncStatus, setSyncStatus] = useState('idle'); // idle | syncing | error
-  const [syncError, setSyncError] = useState('');
-  const [syncMessage, setSyncMessage] = useState('');
+  const [gmailSyncStatus, setGmailSyncStatus] = useState('idle'); // idle | syncing | error
+  const [gmailSyncError, setGmailSyncError] = useState('');
+  const [gmailSyncMessage, setGmailSyncMessage] = useState('');
+  const [gmailInfo, setGmailInfo] = useState(null);
 
   const loadMeetings = useCallback(async () => {
     setListStatus('loading');
@@ -33,7 +35,10 @@ export default function MeetingsView() {
     }
   }, []);
 
-  useEffect(() => { loadMeetings(); }, [loadMeetings]);
+  useEffect(() => {
+    loadMeetings();
+    fetchGmailStatus().then(info => setGmailInfo(info)).catch(() => {});
+  }, [loadMeetings]);
 
   const handleUpload = useCallback(async () => {
     if (!audioFile) return;
@@ -51,28 +56,28 @@ export default function MeetingsView() {
     }
   }, [audioFile, meetingTitle, loadMeetings]);
 
-  const handleSync = useCallback(async () => {
-    setSyncStatus('syncing');
-    setSyncError('');
-    setSyncMessage('');
+  const handleGmailSync = useCallback(async () => {
+    setGmailSyncStatus('syncing');
+    setGmailSyncError('');
+    setGmailSyncMessage('');
     try {
-      const { newMeetingsProcessed } = await syncFathomMeetings();
-      setSyncMessage(
+      const { newMeetingsProcessed } = await syncGmailMeetings();
+      setGmailSyncMessage(
         newMeetingsProcessed > 0
-          ? `Synced ${newMeetingsProcessed} new meeting${newMeetingsProcessed !== 1 ? 's' : ''} from Fathom.`
-          : 'No new Fathom meetings found.'
+          ? `Synced ${newMeetingsProcessed} new Granola note${newMeetingsProcessed !== 1 ? 's' : ''}.`
+          : 'No new Granola notes found in Gmail.'
       );
-      setSyncStatus('idle');
+      setGmailSyncStatus('idle');
       await loadMeetings();
     } catch (err) {
-      setSyncError(err.message);
-      setSyncStatus('error');
+      setGmailSyncError(err.message);
+      setGmailSyncStatus('error');
     }
   }, [loadMeetings]);
 
   return (
     <div className="upload-screen" style={{ overflowY: 'auto', height: '100%', padding: '2rem' }}>
-      {/* ── Ingestion: Fathom sync + manual upload ─────────────────────── */}
+      {/* ── Ingestion: Granola + manual upload ─────────────────────── */}
       <div className="glass-card" style={{ marginBottom: '2rem' }}>
         <div className="glass-card-header">
           <h2 className="glass-card-title">
@@ -81,39 +86,48 @@ export default function MeetingsView() {
           </h2>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-          {/* Fathom sync */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
+          {/* Granola Gmail sync */}
           <div style={{
             padding: '1.25rem',
             borderRadius: 10,
             border: '1px solid var(--card-border)',
             background: 'rgba(255,255,255,0.02)',
+            display: 'flex',
+            flexDirection: 'column',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-              <Cloud size={16} style={{ color: 'var(--text-secondary)' }} />
-              <strong style={{ fontSize: '0.9rem' }}>Sync from Fathom</strong>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Mail size={16} style={{ color: '#38bdf8' }} />
+                <strong style={{ fontSize: '0.9rem' }}>Granola Notes (Gmail)</strong>
+              </div>
+              {gmailInfo?.connected && (
+                <span style={{ fontSize: '0.72rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <CheckCircle2 size={12} /> Connected
+                </span>
+              )}
             </div>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              Pulls meetings recorded in the last 30 days and extracts attendees, jobs discussed, and insights for any not already processed.
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '1rem', flexGrow: 1 }}>
+              Scans your Gmail inbox for Granola meeting summaries sent by teammates and parses them into your dashboard.
             </p>
             <button
               className="btn btn-secondary"
-              onClick={handleSync}
-              disabled={syncStatus === 'syncing'}
+              onClick={handleGmailSync}
+              disabled={gmailSyncStatus === 'syncing'}
               style={{ width: '100%' }}
             >
-              {syncStatus === 'syncing' ? (
+              {gmailSyncStatus === 'syncing' ? (
                 <><RefreshCw size={14} className="spin" /> Syncing…</>
               ) : (
-                <><Cloud size={14} /> Sync Fathom Meetings</>
+                <><Mail size={14} /> Sync Granola Emails</>
               )}
             </button>
-            {syncMessage && (
-              <p style={{ fontSize: '0.8rem', color: 'var(--color-excel)', marginTop: '0.6rem' }}>{syncMessage}</p>
+            {gmailSyncMessage && (
+              <p style={{ fontSize: '0.8rem', color: 'var(--color-excel)', marginTop: '0.6rem' }}>{gmailSyncMessage}</p>
             )}
-            {syncStatus === 'error' && (
+            {gmailSyncError && (
               <p style={{ fontSize: '0.8rem', color: 'var(--color-critical)', marginTop: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <AlertCircle size={13} /> {syncError}
+                <AlertCircle size={13} /> {gmailSyncError}
               </p>
             )}
           </div>
@@ -124,13 +138,15 @@ export default function MeetingsView() {
             borderRadius: 10,
             border: '1px solid var(--card-border)',
             background: 'rgba(255,255,255,0.02)',
+            display: 'flex',
+            flexDirection: 'column',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
               <Upload size={16} style={{ color: 'var(--text-secondary)' }} />
               <strong style={{ fontSize: '0.9rem' }}>Upload a Recording</strong>
             </div>
             <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-              For in-person or any other meeting not captured by Fathom. Transcribed via Mistral Voxtral.
+              For in-person or any other meeting recording. Transcribed via Mistral.
             </p>
 
             <input
@@ -252,6 +268,13 @@ function MeetingCard({ meeting }) {
         </span>
       </div>
 
+      {meeting.sharedBy && (
+        <div style={{ fontSize: '0.78rem', color: '#38bdf8', marginBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <Mail size={12} />
+          <span>Shared by <strong>{meeting.sharedBy}</strong></span>
+        </div>
+      )}
+
       {meeting.summary && (
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.85rem', lineHeight: 1.5 }}>
           {meeting.summary}
@@ -281,7 +304,7 @@ function MeetingCard({ meeting }) {
         </div>
       )}
 
-      {meeting.transcriptText && (
+      {(meeting.notesBody || meeting.transcriptText) && (
         <div style={{ marginTop: '0.85rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--card-border)' }}>
           <button
             className="btn btn-secondary btn-outline"
@@ -289,31 +312,93 @@ function MeetingCard({ meeting }) {
             style={{ fontSize: '0.78rem', padding: '0.35rem 0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
           >
             <FileText size={13} />
-            {showTranscript ? 'Hide Full Transcript' : 'View Full Transcript'}
+            {showTranscript ? 'Hide Full Notes' : 'View Full Notes'}
             {showTranscript ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>
 
           {showTranscript && (
             <div style={{
-              marginTop: '0.75rem',
-              padding: '1rem',
-              borderRadius: 8,
-              background: 'rgba(0, 0, 0, 0.25)',
+              marginTop: '0.85rem',
+              padding: '1.25rem',
+              borderRadius: 10,
+              background: 'var(--card-bg, #ffffff)',
               border: '1px solid var(--card-border)',
-              maxHeight: '350px',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.03)',
+              maxHeight: '420px',
               overflowY: 'auto',
-              fontFamily: 'monospace',
-              fontSize: '0.8rem',
-              lineHeight: 1.6,
-              color: 'var(--text-secondary)',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word'
             }}>
-              {meeting.transcriptText}
+              <FormattedNotes text={meeting.notesBody || meeting.transcriptText || ''} />
             </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function FormattedNotes({ text }) {
+  if (!text) return null;
+  const lines = text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l !== '(' && l !== ')' && l !== '()' && !/^\s*[\(\)]+\s*$/.test(l));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+      {lines.map((line, idx) => {
+        const isHeader = /^[A-Z][A-Za-z0-9\s:,-]+$/i.test(line) && !line.startsWith('•') && line.length < 60 && !line.startsWith('Date:');
+        const isBullet = line.startsWith('•');
+
+        if (isHeader) {
+          return (
+            <h4
+              key={idx}
+              style={{
+                margin: idx === 0 ? '0 0 0.2rem 0' : '0.85rem 0 0.2rem 0',
+                fontSize: '0.88rem',
+                fontWeight: 700,
+                color: 'var(--text-primary)',
+                letterSpacing: '-0.2px',
+              }}
+            >
+              {line.replace(/:$/, '')}
+            </h4>
+          );
+        }
+
+        if (isBullet) {
+          return (
+            <div
+              key={idx}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '0.5rem',
+                fontSize: '0.84rem',
+                color: 'var(--text-secondary)',
+                lineHeight: 1.5,
+              }}
+            >
+              <span style={{ color: '#2563eb', fontWeight: 700, lineHeight: 1.2 }}>•</span>
+              <span>{line.replace(/^•\s*/, '')}</span>
+            </div>
+          );
+        }
+
+        return (
+          <p
+            key={idx}
+            style={{
+              margin: 0,
+              fontSize: '0.84rem',
+              color: 'var(--text-secondary)',
+              lineHeight: 1.5,
+            }}
+          >
+            {line}
+          </p>
+        );
+      })}
     </div>
   );
 }

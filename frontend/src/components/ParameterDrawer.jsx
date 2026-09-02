@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { X } from 'lucide-react';
+import { X, Users, Calendar } from 'lucide-react';
 
 /* ── Shared UI helpers ───────────────────────────────────────────────── */
 
@@ -535,6 +535,165 @@ function P4Detail({ metrics }) {
   );
 }
 
+function InternalMeetingDetail({ metrics, clientName, selectedMonth, selectedYear }) {
+  const im = metrics?.internalMeeting || {
+    attendedDays: 0,
+    totalWorkingDays: 21,
+    missedDays: 21,
+    attendanceRate: 0,
+    daysList: [],
+  };
+
+  const { attendedDays = 0, totalWorkingDays = 21, missedDays = 21, attendanceRate = 0, daysList = [] } = im;
+  const rateToDisplay = Math.round(attendanceRate);
+  const attColor = rateToDisplay >= 75 ? '#10B981' : rateToDisplay >= 50 ? '#F59E0B' : '#EF4444';
+
+  return (
+    <>
+      {/* Box 1: Daily Attendance Stats (matching snapshot) */}
+      <SectionTitle>Daily Internal Meeting Attendance</SectionTitle>
+      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem' }}>
+        <StatCard label="Calls attended" value={attendedDays} color="#10B981" />
+        <StatCard label="Calls missed" value={missedDays} color={missedDays > 0 ? '#EF4444' : 'var(--text-muted)'} />
+        <StatCard
+          label="Attendance rate"
+          value={`${rateToDisplay}%`}
+          color={attColor}
+        />
+      </div>
+
+      {/* Visual attendance bar */}
+      <div style={{ height: 10, borderRadius: 5, background: 'rgba(255,255,255,0.07)', overflow: 'hidden', marginBottom: '0.5rem' }}>
+        <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, rateToDisplay))}%`, background: attColor, borderRadius: 5, transition: 'width 0.6s ease' }} />
+      </div>
+      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '1.25rem' }}>
+        {attendedDays > 0
+          ? `Internal meetings were conducted on ${attendedDays} out of ${totalWorkingDays} scheduled working days this month for ${clientName}.`
+          : `No internal meetings were logged for ${clientName} this month.`}
+      </p>
+
+      {/* Box 2: Meeting breakdown with Brand Name, Date, Attendees */}
+      <SectionTitle>Internal Meetings Conducted ({daysList.length})</SectionTitle>
+      {daysList.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem' }}>
+          {daysList.map((dayItem, idx) => {
+            const formattedDate = dayItem.date
+              ? new Date(dayItem.date).toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })
+              : dayItem.dateKey;
+
+            return (
+              <div key={idx} style={{
+                padding: '1rem',
+                borderRadius: 10,
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid var(--card-border)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.65rem',
+              }}>
+                {/* Brand name & Date Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{
+                      fontSize: '0.82rem',
+                      fontWeight: 700,
+                      color: 'var(--text-primary)',
+                      background: 'rgba(56, 189, 248, 0.12)',
+                      border: '1px solid rgba(56, 189, 248, 0.3)',
+                      padding: '0.2rem 0.6rem',
+                      borderRadius: 6,
+                    }}>
+                      {clientName}
+                    </span>
+                    <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                      📅 {formattedDate}
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    color: 'var(--text-muted)',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    padding: '0.15rem 0.5rem',
+                    borderRadius: 4,
+                  }}>
+                    {dayItem.meetingsCount} note{dayItem.meetingsCount !== 1 ? 's' : ''} logged
+                  </span>
+                </div>
+
+                {/* Attendees list */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginTop: '0.2rem' }}>
+                  <Users size={14} style={{ color: '#38bdf8', flexShrink: 0, marginTop: '0.2rem' }} />
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginRight: '0.2rem' }}>
+                      Attendees:
+                    </span>
+                    {dayItem.attendees.length > 0 ? (
+                      dayItem.attendees.map((att, aIdx) => (
+                        <span key={aIdx} style={{
+                          fontSize: '0.75rem',
+                          fontWeight: 500,
+                          padding: '0.15rem 0.5rem',
+                          borderRadius: 6,
+                          background: 'rgba(56, 189, 248, 0.08)',
+                          border: '1px solid rgba(56, 189, 248, 0.2)',
+                          color: 'var(--text-primary)',
+                        }}>
+                          {att}
+                        </span>
+                      ))
+                    ) : (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        No specific attendees listed
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Meeting notes/titles list for this day */}
+                {dayItem.meetings.map((m, mIdx) => (
+                  <div key={mIdx} style={{
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: 6,
+                    background: 'rgba(255, 255, 255, 0.015)',
+                    border: '1px dashed var(--card-border)',
+                    fontSize: '0.78rem',
+                    color: 'var(--text-secondary)',
+                  }}>
+                    {m.meetingTitle && (
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.2rem' }}>
+                        {m.meetingTitle}
+                      </div>
+                    )}
+                    {m.summary && (
+                      <div style={{ lineHeight: 1.4, color: 'var(--text-secondary)' }}>
+                        {m.summary}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{
+          textAlign: 'center',
+          padding: '2rem 1rem',
+          borderRadius: 10,
+          background: 'rgba(255, 255, 255, 0.02)',
+          border: '1px dashed var(--card-border)',
+          color: 'var(--text-secondary)',
+          fontSize: '0.85rem',
+          marginBottom: '1rem',
+        }}>
+          No internal meeting emails/notes found for <strong>{clientName}</strong> in this month.
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ── Main drawer ─────────────────────────────────────────────────────── */
 
 const PARAMS = {
@@ -542,6 +701,7 @@ const PARAMS = {
   p2: { title: 'Delivery Date',            sub: 'On-time closed deliverable ratio',        weight: '40%', color: '#10B981' },
   p3: { title: 'Cross-Functional Meeting', sub: 'Creative & Management attendance',        weight: '25%', color: '#f59e0b' },
   p4: { title: 'Proactiveness',            sub: 'Initiative task index',             weight: '10%', color: '#a78bfa' },
+  internal_meeting: { title: 'Internal Meeting', sub: 'Daily internal syncs & attendees', weight: 'Logged', color: '#38bdf8' },
 };
 
 export default function ParameterDrawer({ param, scoreData, onClose }) {
@@ -566,8 +726,15 @@ export default function ParameterDrawer({ param, scoreData, onClose }) {
     sub: (param === 'p1' && isNoInPersonBrand) ? 'Daily JSR call attendance' : metaRaw.sub
   } : null;
 
-  const score   = param ? scoreData.scores[param] : 0;
-  const insight = param ? scoreData.insights[param] : '';
+  const score = param === 'internal_meeting'
+    ? (scoreData?.metrics?.internalMeeting?.score ?? 0)
+    : (param ? (scoreData?.scores?.[param] ?? 0) : 0);
+
+  const insight = param === 'internal_meeting'
+    ? (scoreData?.metrics?.internalMeeting?.attendedDays > 0
+        ? `Internal meetings conducted on ${scoreData.metrics.internalMeeting.attendedDays} day(s) with ${Math.round(scoreData.metrics.internalMeeting.attendanceRate)}% attendance.`
+        : 'No internal meetings recorded for this brand in the selected month.')
+    : (param ? scoreData?.insights?.[param] || '' : '');
 
   return (
     <>
@@ -650,6 +817,14 @@ export default function ParameterDrawer({ param, scoreData, onClose }) {
               {param === 'p2' && <P2Detail metrics={scoreData.metrics} selectedMonth={scoreData.selectedMonth} selectedYear={scoreData.selectedYear} />}
               {param === 'p3' && <P3Detail metrics={scoreData.metrics} />}
               {param === 'p4' && <P4Detail metrics={scoreData.metrics} />}
+              {param === 'internal_meeting' && (
+                <InternalMeetingDetail
+                  metrics={scoreData.metrics}
+                  clientName={scoreData.clientName}
+                  selectedMonth={scoreData.month !== undefined ? scoreData.month : scoreData.selectedMonth}
+                  selectedYear={scoreData.year !== undefined ? scoreData.year : scoreData.selectedYear}
+                />
+              )}
 
               {/* Assessment Insight */}
               <SectionTitle>Summary</SectionTitle>

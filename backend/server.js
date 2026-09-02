@@ -16,6 +16,7 @@ import { getTeamsCollection, getMeetingInsightsCollection } from './db.js';
 import { ALLOWED_TEAM_NAMES } from './podConfig.js';
 import { transcribeAudio, extractMeetingInsights } from './mistralService.js';
 import { listRecentMeetings, meetingTranscriptToText } from './fathomService.js';
+import { fetchGranolaMeetingEmails, getAuthStatus } from './gmailService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -461,6 +462,7 @@ app.post('/api/meetings/fathom/sync', alertTriggerLimiter, async (req, res) => {
     const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const meetings = await listRecentMeetings(sinceDate);
 
+    const collection = await getMeetingInsightsCollection();
     const processed = [];
     for (const meeting of meetings) {
       const sourceMeetingId = meeting.id || meeting.recording_id;
@@ -493,6 +495,81 @@ app.post('/api/meetings/fathom/sync', alertTriggerLimiter, async (req, res) => {
   } catch (err) {
     console.error('[server] POST /api/meetings/fathom/sync error:', err);
     res.status(500).json({ error: 'Failed to sync meetings from Fathom.' });
+  }
+});
+
+/**
+ * GET /api/meetings/gmail/status
+ * Returns Gmail OAuth authorization status and connected email.
+ */
+app.get('/api/meetings/gmail/status', async (_req, res) => {
+  try {
+    const status = await getAuthStatus();
+    res.json(status);
+  } catch (err) {
+    console.error('[server] GET /api/meetings/gmail/status error:', err);
+    res.status(500).json({ error: 'Failed to get Gmail auth status.' });
+  }
+});
+
+/**
+ * POST /api/meetings/gmail/sync
+ * Fetches Granola meeting notes from Gmail, extracts insights,
+ * and saves new meeting docs to MongoDB.
+ */
+app.post('/api/meetings/gmail/sync', alertTriggerLimiter, async (req, res) => {
+  try {
+    const maxResults = parseInt(req.query?.maxResults || req.body?.maxResults || '50', 10);
+    const emails = await fetchGranolaMeetingEmails({ maxResults });
+    const collection = await getMeetingInsightsCollection();
+
+    const processed = [];
+    for (const item of emails) {
+      const sourceMeetingId = item.sourceMeetingId;
+      if (!sourceMeetingId) continue;
+
+      const existing = await collection.findOne({ source: 'granola', sourceMeetingId });
+      if (existing) continue;
+
+      let extracted = {};
+      if (item.notesBody && item.notesBody.trim().length > 20 && process.env.MISTRAL_API_KEY) {
+        try {
+          extracted = await extractMeetingInsights(item.notesBody, item.meetingTitle);
+        } catch (e) {
+          console.warn(`[server] Mistral extraction skipped for Granola note "${item.meetingTitle}":`, e.message);
+        }
+      }
+
+      const doc = {
+        source: 'granola',
+        sourceMeetingId,
+        meetingTitle: item.meetingTitle || null,
+        meetingDate: item.meetingDate || new Date(),
+        sharedBy: item.sharedBy || null,
+        attendees: item.attendees || (item.sharedBy ? [item.sharedBy] : []),
+        attendeeCount: item.attendeeCount || null,
+        summary: item.summary || null,
+        notesBody: item.notesBody || null,
+        transcriptText: item.notesBody || null,
+        viewNoteUrl: item.viewNoteUrl || null,
+        rawSubject: item.rawSubject || null,
+        rawFrom: item.rawFrom || null,
+        sentiment: extracted.sentiment || 'neutral',
+        keyThemes: extracted.keyThemes || [],
+        clientPainPoints: extracted.clientPainPoints || [],
+        actionItems: extracted.actionItems || [],
+        jobsDiscussed: extracted.jobsDiscussed || [],
+        createdAt: new Date(),
+      };
+
+      const result = await collection.insertOne(doc);
+      processed.push({ ...doc, _id: result.insertedId });
+    }
+
+    res.json({ success: true, newMeetingsProcessed: processed.length, meetings: processed });
+  } catch (err) {
+    console.error('[server] POST /api/meetings/gmail/sync error:', err);
+    res.status(500).json({ error: err.message || 'Failed to sync Granola emails from Gmail.' });
   }
 });
 

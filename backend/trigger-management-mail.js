@@ -2,16 +2,10 @@ import 'dotenv/config';
 import { getDailyDigestSnapshotsCollection } from './db.js';
 import { sendPodDigestEmail } from './emailService.js';
 
-const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
-
 async function run() {
   const targetEmail = process.argv[2] || 'apoorv@cogculture.agency';
   const targetName = process.argv[3] || 'Apoorv';
 
-  const apiKey = process.env.BREVO_API_KEY;
-  if (!apiKey) {
-    throw new Error('BREVO_API_KEY is missing');
-  }
 
   const snapshots = await getDailyDigestSnapshotsCollection();
   const snapshot = await snapshots.find({}).sort({ generatedAt: -1 }).limit(1).next();

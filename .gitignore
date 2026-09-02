@@ -32,4 +32,7 @@ sent-alerts.json
 test-email.js
 send-real-test.js
 trigger-alert.js
+gmail_tokens.json
+*tokens.json
+google_oauth_client.json
 

@@ -134,8 +134,8 @@ function drawClientScorecardPage(doc, data) {
     {
       name: '2. Delivery Date',
       summary: metrics.p2.totalClosed === 0 
-        ? 'No Closed Deliverables'
-        : `${metrics.p2.onTimeJobs} of ${metrics.p2.totalClosed} Deliverables On-Time (${Math.round(metrics.p2.onTimeRate)}%)`,
+        ? ((metrics.p2.delayedJobs || 0) > 0 ? `${metrics.p2.delayedJobs} Delayed deliverable(s)` : 'No Closed Deliverables')
+        : `${metrics.p2.onTimeJobs} of ${metrics.p2.totalClosed} Deliverables On-Time (${Math.round(metrics.p2.onTimeRate)}%)${(metrics.p2.delayedJobs || 0) > 0 ? ` | ${metrics.p2.delayedJobs} Delayed` : ''}`,
       score: `${scores.p2} / 10`
     },
     {
@@ -201,6 +201,15 @@ function drawClientScorecardPage(doc, data) {
   curY += 10;
 
   const closedJobs = metrics.p2.jobs || [];
+  const allMonthJobsList = (metrics.p2.allMonthJobs && metrics.p2.allMonthJobs.length > 0)
+    ? metrics.p2.allMonthJobs
+    : (data.jobsList && data.jobsList.length > 0)
+      ? data.jobsList
+      : closedJobs;
+
+  const delayedCount = metrics.p2.delayedJobs !== undefined
+    ? metrics.p2.delayedJobs
+    : allMonthJobsList.filter(j => j.onTime === false || (j.delayDays && j.delayDays > 0)).length;
 
   // Score this month box
   doc.setDrawColor(16, 185, 129); // emerald border
@@ -253,19 +262,33 @@ function drawClientScorecardPage(doc, data) {
   doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
   doc.text('On time', 10 + boxW + 2 + boxW/2, curY + 14, { align: 'center' });
 
-  // Delayed box
+  // Delayed box (Aligned with UI Parameter Drawer)
   doc.rect(10 + (boxW + 2)*2, curY, boxW, 16);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
-  doc.setTextColor(239, 68, 68); // red
-  const dCount = metrics.p2.totalClosed - metrics.p2.onTimeJobs;
-  doc.text(`${dCount}`, 10 + (boxW + 2)*2 + boxW/2, curY + 9, { align: 'center' });
+  if (delayedCount > 0) {
+    doc.setTextColor(239, 68, 68); // red
+  } else {
+    doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+  }
+  doc.text(`${delayedCount}`, 10 + (boxW + 2)*2 + boxW/2, curY + 9, { align: 'center' });
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
   doc.text('Delayed', 10 + (boxW + 2)*2 + boxW/2, curY + 14, { align: 'center' });
 
   curY += 24;
+
+  if (delayedCount > 0) {
+    doc.setFillColor(254, 242, 242);
+    doc.setDrawColor(248, 113, 113);
+    doc.rect(10, curY, pageWidth - 20, 8, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(220, 38, 38);
+    doc.text(`Alert: ${delayedCount} deliverable${delayedCount !== 1 ? 's have' : ' has'} exceeded the client timeline target.`, 14, curY + 5.5);
+    curY += 12;
+  }
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
@@ -310,103 +333,165 @@ function drawClientScorecardPage(doc, data) {
     }
   });
 
-  // --- PAGE 2: JOB LEVEL ANALYSIS ---
+  // --- PAGE 2: DELIVERABLES TABLE (XXL, XL, L, M, S) ---
   doc.addPage();
   doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
   doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
   
-  // Jobs Table
-  let tableY = 18;
+  // Jobs Table Header Title
+  let tableY = 16;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
   doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-  doc.text('High Priority Jobs (XL & XXL)', 10, tableY);
+  doc.text('Monthly Deliverables Breakdown', 10, tableY);
 
-  tableY += 6;
+  tableY += 5;
   doc.setFillColor(241, 245, 249);
   doc.rect(10, tableY, pageWidth - 20, 8, 'F');
   doc.rect(10, tableY, pageWidth - 20, 8);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
+  doc.setFontSize(7.5);
   doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
   doc.text('DELIVERABLE', 12, tableY + 5.5);
-  doc.text('PRIORITY', 95, tableY + 5.5);
-  doc.text('STATUS', 125, tableY + 5.5);
-  doc.text('DEADLINE', 165, tableY + 5.5);
+  doc.text('PRIORITY', 69, tableY + 5.5);
+  doc.text('STATUS', 86, tableY + 5.5);
+  doc.text('CLIENT TARGET', 114, tableY + 5.5);
+  doc.text('DELIVERED', 142, tableY + 5.5);
+  doc.text('CTR / ATR', 170, tableY + 5.5);
 
   tableY += 8;
-  const allJobs = (data.jobsList || []).filter(j => {
-    const p = (j.priority || '').toString().toUpperCase();
-    return p === 'XL' || p === 'XXL';
+  
+  // Include all priorities (XXL, XL, L, M, S)
+  const priWeight = { 'XXL': 5, 'XL': 4, 'L': 3, 'M': 2, 'S': 1 };
+  const sortedJobs = [...allMonthJobsList].sort((a, b) => {
+    const wa = priWeight[(a.priority || '').toUpperCase()] || 0;
+    const wb = priWeight[(b.priority || '').toUpperCase()] || 0;
+    if (wb !== wa) return wb - wa;
+    const da = a.clientTimeline || a.deadline || '';
+    const db = b.clientTimeline || b.deadline || '';
+    return da.localeCompare(db);
   });
   
   let currentRowsOnPage = 0;
-  if (allJobs.length === 0) {
+  if (sortedJobs.length === 0) {
     doc.setFont('helvetica', 'italic');
-    doc.text('No high priority jobs logged.', 12, tableY + 6);
+    doc.text('No deliverables recorded for this period.', 12, tableY + 6);
     currentRowsOnPage = 1;
   } else {
     doc.setFont('helvetica', 'normal');
     
-    let maxRowsForCurrentPage = 30; // first table page has the 'All Monthly Jobs' header
+    let maxRowsForCurrentPage = 29; // first table page
     
-    allJobs.forEach((job, i) => {
+    sortedJobs.forEach((job) => {
       if (currentRowsOnPage >= maxRowsForCurrentPage) {
         // Create a new page for continuation
         doc.addPage();
         doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
         doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
         
-        tableY = 15;
+        tableY = 14;
         doc.setFillColor(241, 245, 249);
         doc.rect(10, tableY, pageWidth - 20, 8, 'F');
         doc.rect(10, tableY, pageWidth - 20, 8);
 
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
+        doc.setFontSize(7.5);
         doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
         doc.text('DELIVERABLE (CONT.)', 12, tableY + 5.5);
-        doc.text('PRIORITY', 95, tableY + 5.5);
-        doc.text('STATUS', 125, tableY + 5.5);
-        doc.text('DEADLINE', 165, tableY + 5.5);
+        doc.text('PRIORITY', 69, tableY + 5.5);
+        doc.text('STATUS', 86, tableY + 5.5);
+        doc.text('CLIENT TARGET', 114, tableY + 5.5);
+        doc.text('DELIVERED', 142, tableY + 5.5);
+        doc.text('CTR / ATR', 170, tableY + 5.5);
         
         tableY += 8;
         currentRowsOnPage = 0;
-        maxRowsForCurrentPage = 33; // No title on this page, more room
-        doc.setFont('helvetica', 'normal'); // Reset to normal for table cells
+        maxRowsForCurrentPage = 32; // continuation page
+        doc.setFont('helvetica', 'normal');
       }
 
-      const rowY = tableY + (currentRowsOnPage * 8);
-      doc.rect(10, rowY, pageWidth - 20, 8);
+      const rowY = tableY + (currentRowsOnPage * 7.5);
+      doc.rect(10, rowY, pageWidth - 20, 7.5);
       if (currentRowsOnPage % 2 === 1) {
         doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
-        doc.rect(10.5, rowY + 0.5, pageWidth - 21, 7, 'F');
+        doc.rect(10.5, rowY + 0.5, pageWidth - 21, 6.5, 'F');
       }
 
-      let deliverable = (job.deliverable || job.jobId || '-').toString().substring(0, 45);
-      if (deliverable.length === 45) deliverable += '...';
+      let deliverable = (job.deliverable || job.jobId || '-').toString().trim();
+      if (deliverable.length > 30) deliverable = deliverable.substring(0, 28) + '...';
       
       const priority = (job.priority || '-').toString().toUpperCase();
-      const status = (job.status || '-').toString().substring(0, 15);
+      let status = (job.status || 'Pending').toString().trim();
+      if (status.length > 13) status = status.substring(0, 12) + '..';
       
-      let deadline = '-';
-      if (job.clientTimeline && job.clientTimeline instanceof Date && !isNaN(job.clientTimeline)) {
-        deadline = job.clientTimeline.toISOString().split('T')[0];
+      // Client Target Date
+      let clientTarget = '-';
+      if (job.clientTimeline) {
+        clientTarget = (job.clientTimeline instanceof Date) ? job.clientTimeline.toISOString().split('T')[0] : job.clientTimeline.toString();
+      } else if (job.deadline) {
+        clientTarget = (job.deadline instanceof Date) ? job.deadline.toISOString().split('T')[0] : job.deadline.toString();
       }
 
+      // Delivered Date
+      let delivered = '-';
+      if (job.deliveryDate) {
+        delivered = (job.deliveryDate instanceof Date) ? job.deliveryDate.toISOString().split('T')[0] : job.deliveryDate.toString();
+      } else if (job.actual) {
+        delivered = (job.actual instanceof Date) ? job.actual.toISOString().split('T')[0] : job.actual.toString();
+      } else if (status.toLowerCase() === 'closed' || status.toLowerCase() === 'completed') {
+        delivered = clientTarget !== '-' ? clientTarget : 'Closed';
+      } else {
+        delivered = 'Pending';
+      }
+
+      // CTR / ATR / Delay status
+      const isDelayed = job.onTime === false || (job.delayDays && job.delayDays > 0);
+      let ctrAtr = '';
+      const ctrCount = job.clientAlterations || 0;
+      const atrCount = job.agencyAlterations || 0;
+      if (ctrCount > 0 || atrCount > 0) {
+        ctrAtr = `${ctrCount} CTR${atrCount > 0 ? ` | ${atrCount} ATR` : ''}`;
+      } else if (isDelayed && job.delayDays > 0) {
+        ctrAtr = `+${job.delayDays}d delay`;
+      } else {
+        ctrAtr = '0 CTR';
+      }
+
+      // Print Deliverable
+      doc.setFontSize(7.5);
       doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      doc.text(deliverable, 12, rowY + 5.5);
+      doc.text(deliverable, 12, rowY + 5.2);
       
-      // Color code priority
+      // Print Priority
+      doc.setFont('helvetica', 'bold');
       if (['XXL', 'XL'].includes(priority)) doc.setTextColor(220, 38, 38);
       else if (priority === 'L') doc.setTextColor(234, 88, 12);
+      else if (priority === 'M') doc.setTextColor(59, 130, 246);
       else doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-      doc.text(priority, 95, rowY + 5.5);
+      doc.text(priority, 69, rowY + 5.2);
       
-      doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      doc.text(status, 125, rowY + 5.5);
-      doc.text(deadline, 165, rowY + 5.5);
+      // Print Status
+      if (isDelayed) doc.setTextColor(220, 38, 38);
+      else if (status.toLowerCase().includes('closed') || status.toLowerCase().includes('completed')) doc.setTextColor(16, 185, 129);
+      else doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.setFont('helvetica', 'normal');
+      doc.text(status, 86, rowY + 5.2);
+      
+      // Print Client Target
+      doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+      doc.text(clientTarget, 114, rowY + 5.2);
+
+      // Print Delivered
+      if (isDelayed && delivered !== 'Pending') doc.setTextColor(220, 38, 38);
+      else doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.text(delivered, 142, rowY + 5.2);
+
+      // Print CTR / ATR
+      if (isDelayed) doc.setTextColor(220, 38, 38);
+      else if (ctrCount > 0) doc.setTextColor(245, 158, 11);
+      else doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+      doc.text(ctrAtr, 170, rowY + 5.2);
       
       currentRowsOnPage++;
     });

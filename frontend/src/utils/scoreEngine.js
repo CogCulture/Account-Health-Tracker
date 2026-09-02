@@ -244,6 +244,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
       delayDays,
       priority:          (row.priority || '').toString().trim().toUpperCase(),
       clientAlterations: row.clientAlterations || 0,
+      agencyAlterations: row.agencyAlterations || 0,
     };
   });
 
@@ -299,6 +300,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
       delayDays,
       priority:          (row.priority || '').toString().trim().toUpperCase(),
       clientAlterations: row.clientAlterations || 0,
+      agencyAlterations: row.agencyAlterations || 0,
     };
   });
 
@@ -605,23 +607,12 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     },
     metrics: {
       p1: { inPersonCalls, clientUnavailableCount, attendanceRate, displayAttendanceRate, attendedCount, totalWorkingDays },
-      p2: { totalClosed, onTimeJobs, onTimeRate, jobs: p2JobDetails, allMonthJobs, priorityWarnings },
+      p2: { totalClosed, onTimeJobs, delayedJobs: allMonthJobs.filter(j => j.onTime === false || (j.delayDays && j.delayDays > 0)).length, onTimeRate, jobs: p2JobDetails, allMonthJobs, priorityWarnings },
       p3: { creativeAttendDays, managementAttendDays, totalWorkingDays: filteredDaily.length, managementMembers },
       p4: { rawProactiveScore, rawScore, proactiveDetails, pctApproved, pctUnapproved, totalJobsCount, jobs: p4JobDetails }
     },
     escalationCount,
-    jobsList: filteredJobs.map(row => ({
-      jobId: row.jobId,
-      deliverable: row.deliverable,
-      jobType: row.jobType,
-      status: row.status,
-      timelineStatus: row.timelineStatus,
-      priority: row.priority,
-      escalation: row.escalation,
-      clientTimeline: row.clientTimeline,
-      deliveryDate: row.deliveryDate || row.closingDate,
-      clientAlterations: row.clientAlterations || 0,
-    })),
+    jobsList: allMonthJobs,
     pendingLargeJobs,
     rating,
     badgeColor,
