@@ -7,6 +7,7 @@ import ErrorModal from './components/ErrorModal';
 import SheetSetup from './components/SheetSetup';
 import MeetingsView from './components/MeetingsView';
 import { fetchDailyDigestSnapshot, fetchSheetData, fetchSheetTabs } from './utils/sheetsApi';
+import { apiUrl } from './utils/apiClient';
 import { parseDailyTrackerRows, parseJobTrackerRows, getCommonClientTabs, parseAssignedPersons } from './utils/sheetsParser';
 import { calculateHealthScore } from './utils/scoreEngine';
 import { RefreshCw, BarChart3, Settings } from 'lucide-react';
@@ -136,7 +137,7 @@ export default function App() {
   useEffect(() => {
     const fetchActiveTeams = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/teams`);
+        const res = await fetch(apiUrl('/api/teams'));
         const data = await res.json();
         const active = data.teams.filter(t => t.active);
 
@@ -204,7 +205,7 @@ export default function App() {
       return result;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/job-status/sync`, {
+      const res = await fetch(apiUrl('/api/job-status/sync'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ brandName: label, jobs: jobsToSync }),
