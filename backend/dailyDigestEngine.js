@@ -1,5 +1,5 @@
-import { parseJobTrackerRows, parseDailyTrackerRows, getCommonClientTabs, parseAssignedPersons } from '../frontend/src/utils/sheetsParser.js';
-import { calculateHealthScore } from '../frontend/src/utils/scoreEngine.js';
+import { parseJobTrackerRows, parseDailyTrackerRows, getCommonClientTabs, parseAssignedPersons } from './utils/sheetsParser.js';
+import { calculateHealthScore } from './utils/scoreEngine.js';
 import { sendPodDigestEmail } from './emailService.js';
 import { getTeamsCollection, getDailyDigestSnapshotsCollection } from './db.js';
 import { POD_RECIPIENTS } from './podConfig.js';
