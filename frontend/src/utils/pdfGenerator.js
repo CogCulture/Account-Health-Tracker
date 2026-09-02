@@ -279,17 +279,6 @@ function drawClientScorecardPage(doc, data) {
 
   curY += 24;
 
-  if (delayedCount > 0) {
-    doc.setFillColor(254, 242, 242);
-    doc.setDrawColor(248, 113, 113);
-    doc.rect(10, curY, pageWidth - 20, 8, 'FD');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(220, 38, 38);
-    doc.text(`Alert: ${delayedCount} deliverable${delayedCount !== 1 ? 's have' : ' has'} exceeded the client timeline target.`, 14, curY + 5.5);
-    curY += 12;
-  }
-
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
