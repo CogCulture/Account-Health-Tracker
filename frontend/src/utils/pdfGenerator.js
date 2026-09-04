@@ -59,7 +59,7 @@ function drawClientScorecardPage(doc, data) {
   // --- HEADER SECTION ---
   // Glowing status accent strip on the left side of the header
   doc.setFillColor(statusColor[0], statusColor[1], statusColor[2]);
-  doc.rect(8, 8, 4, 32, 'F');
+  doc.rect(8, 8, 4, 26, 'F');
 
   // Title
   doc.setFont('helvetica', 'bold');
@@ -74,44 +74,18 @@ function drawClientScorecardPage(doc, data) {
   doc.text(`Agency-Client Relationship Assessment   |   Client: ${clientName.toUpperCase()}`, 16, 25);
   doc.text(`Assessment Period: ${monthName} ${year}`, 16, 31);
 
-  // Score Highlight Banner (Right Aligned in Header)
-  doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
-  doc.rect(pageWidth - 75, 8, 67, 32, 'F');
-  doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
-  doc.rect(pageWidth - 75, 8, 67, 32);
-
-  // Total Score Label
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-  doc.text('OVERALL HEALTH SCORE', pageWidth - 70, 14);
-
-  // Score Large Value
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(28);
-  doc.setTextColor(statusColor[0], statusColor[1], statusColor[2]);
-  doc.text(`${scores.percentage}%`, pageWidth - 70, 26);
-
-  // Status Badge inside PDF
-  doc.setFillColor(statusColor[0], statusColor[1], statusColor[2]);
-  doc.rect(pageWidth - 70, 30, 40, 6, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.text(`${badgeText.toUpperCase()}`, pageWidth - 67, 34);
-
   // --- HORIZONTAL SEPARATOR ---
   doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
-  doc.line(8, 46, pageWidth - 8, 46);
+  doc.line(8, 40, pageWidth - 8, 40);
 
   // --- PARAMETERS TABLE ---
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-  doc.text('Parameter Breakdown', 10, 54);
+  doc.text('Parameter Breakdown', 10, 48);
 
   // Table Headers
-  const tableTop = 60;
+  const tableTop = 54;
   doc.setFillColor(241, 245, 249); // slate-100
   doc.rect(10, tableTop, pageWidth - 20, 8, 'F');
   doc.rect(10, tableTop, pageWidth - 20, 8);
@@ -123,28 +97,18 @@ function drawClientScorecardPage(doc, data) {
   doc.text('METRICS SUMMARY', 65, tableTop + 5.5);
   doc.text('POINTS EARNED', pageWidth - 42, tableTop + 5.5);
 
-  // Draw table rows
+  // Draw table rows (Delivery Date & Proactiveness)
   const rowHeight = 12;
   const rows = [
     {
-      name: '1. JSR Calling',
-      summary: `${metrics.p1.inPersonCalls} In-Person Call(s) | ${Math.round(metrics.p1.attendanceRate)}% On-Call Attendance`,
-      score: `${scores.p1} / 10`
-    },
-    {
-      name: '2. Delivery Date',
+      name: '1. Delivery Date',
       summary: metrics.p2.totalClosed === 0 
         ? ((metrics.p2.delayedJobs || 0) > 0 ? `${metrics.p2.delayedJobs} Delayed deliverable(s)` : 'No Closed Deliverables')
         : `${metrics.p2.onTimeJobs} of ${metrics.p2.totalClosed} Deliverables On-Time (${Math.round(metrics.p2.onTimeRate)}%)${(metrics.p2.delayedJobs || 0) > 0 ? ` | ${metrics.p2.delayedJobs} Delayed` : ''}`,
       score: `${scores.p2} / 10`
     },
     {
-      name: '3. Cross-Functional Meeting',
-      summary: `Creative: ${metrics.p3.creativeAttendDays > 0 ? 'Attended' : 'Absent'} | Management: ${metrics.p3.managementAttendDays > 0 ? 'Attended' : 'Absent'}`,
-      score: `${scores.p3} / 10`
-    },
-    {
-      name: '4. Proactiveness',
+      name: '2. Proactiveness',
       summary: `Initiative Approved: ${metrics.p4.proactiveDetails.initPaidApproved} tasks | Initiative Unapproved: ${metrics.p4.proactiveDetails.initPaidUnapproved} tasks`,
       score: `${scores.p4} / 10`
     }
@@ -177,7 +141,7 @@ function drawClientScorecardPage(doc, data) {
   let penaltyOffset = 0;
   if (scores.escalationDeduction > 0) {
     penaltyOffset = 15;
-    const penaltyY = tableTop + 8 + (4 * rowHeight) + 4;
+    const penaltyY = tableTop + 8 + (rows.length * rowHeight) + 4;
     doc.setFillColor(254, 242, 242); // light red background
     doc.setDrawColor(248, 113, 113); // red border
     doc.rect(10, penaltyY, pageWidth - 20, 10, 'FD');
@@ -187,9 +151,8 @@ function drawClientScorecardPage(doc, data) {
     doc.text(`WARNING: -${scores.escalationDeduction}% Escalation Penalty applied. ${data.escalationCount} of ${metrics.p4.totalJobsCount} tasks (${Math.round(scores.escalationPercentage)}%) were escalated.`, 14, penaltyY + 6.5);
   }
 
-
   // --- DELIVERY DATE BREAKDOWN (PAGE 1) ---
-  let curY = tableTop + 8 + (4 * rowHeight) + 4 + penaltyOffset + 10;
+  let curY = tableTop + 8 + (rows.length * rowHeight) + 4 + penaltyOffset + 10;
   
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
@@ -211,6 +174,16 @@ function drawClientScorecardPage(doc, data) {
     ? metrics.p2.delayedJobs
     : allMonthJobsList.filter(j => j.onTime === false || (j.delayDays && j.delayDays > 0)).length;
 
+  const ctrCount = allMonthJobsList.filter(j => {
+    const s = (j.status || '').toLowerCase();
+    return s.includes('ctr') || s.includes('client to revert');
+  }).length;
+
+  const atrCount = allMonthJobsList.filter(j => {
+    const s = (j.status || '').toLowerCase();
+    return s.includes('atr') || s.includes('agency to revert');
+  }).length;
+
   // Score this month box
   doc.setDrawColor(16, 185, 129); // emerald border
   doc.setFillColor(248, 250, 252);
@@ -230,52 +203,39 @@ function drawClientScorecardPage(doc, data) {
   
   curY += 20;
 
-  // THIS MONTH AT A GLANCE
+  // THIS MONTH AT A GLANCE (5 boxes: Closed, On time, Delayed, CTR, ATR)
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
   doc.text('THIS MONTH AT A GLANCE', 10, curY);
   
   curY += 4;
-  const boxW = (pageWidth - 24) / 3;
-  
-  // Jobs closed box
-  doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
-  doc.rect(10, curY, boxW, 16);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-  doc.text(`${metrics.p2.totalClosed}`, 10 + boxW/2, curY + 9, { align: 'center' });
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-  doc.text('Jobs closed', 10 + boxW/2, curY + 14, { align: 'center' });
+  const glanceGap = 2;
+  const boxW = (pageWidth - 20 - (4 * glanceGap)) / 5;
 
-  // On time box
-  doc.rect(10 + boxW + 2, curY, boxW, 16);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.setTextColor(16, 185, 129); // green
-  doc.text(`${metrics.p2.onTimeJobs}`, 10 + boxW + 2 + boxW/2, curY + 9, { align: 'center' });
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-  doc.text('On time', 10 + boxW + 2 + boxW/2, curY + 14, { align: 'center' });
+  const glanceBoxes = [
+    { label: 'Jobs closed', value: `${metrics.p2.totalClosed}`, color: primaryColor },
+    { label: 'On time', value: `${metrics.p2.onTimeJobs}`, color: [16, 185, 129] },
+    { label: 'Delayed', value: `${delayedCount}`, color: delayedCount > 0 ? [239, 68, 68] : secondaryColor },
+    { label: 'CTR', value: `${ctrCount}`, color: ctrCount > 0 ? [245, 158, 11] : secondaryColor },
+    { label: 'ATR', value: `${atrCount}`, color: atrCount > 0 ? [239, 68, 68] : secondaryColor }
+  ];
 
-  // Delayed box (Aligned with UI Parameter Drawer)
-  doc.rect(10 + (boxW + 2)*2, curY, boxW, 16);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  if (delayedCount > 0) {
-    doc.setTextColor(239, 68, 68); // red
-  } else {
+  glanceBoxes.forEach((box, i) => {
+    const boxX = 10 + (i * (boxW + glanceGap));
+    doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+    doc.rect(boxX, curY, boxW, 16);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(15);
+    doc.setTextColor(box.color[0], box.color[1], box.color[2]);
+    doc.text(box.value, boxX + boxW / 2, curY + 9, { align: 'center' });
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
     doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-  }
-  doc.text(`${delayedCount}`, 10 + (boxW + 2)*2 + boxW/2, curY + 9, { align: 'center' });
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-  doc.text('Delayed', 10 + (boxW + 2)*2 + boxW/2, curY + 14, { align: 'center' });
+    doc.text(box.label, boxX + boxW / 2, curY + 14, { align: 'center' });
+  });
 
   curY += 24;
 
@@ -343,11 +303,11 @@ function drawClientScorecardPage(doc, data) {
   doc.setFontSize(7.5);
   doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
   doc.text('DELIVERABLE', 12, tableY + 5.5);
-  doc.text('PRIORITY', 69, tableY + 5.5);
-  doc.text('STATUS', 86, tableY + 5.5);
-  doc.text('CLIENT TARGET', 114, tableY + 5.5);
-  doc.text('DELIVERED', 142, tableY + 5.5);
-  doc.text('CTR / ATR', 170, tableY + 5.5);
+  doc.text('PRIORITY', 65, tableY + 5.5);
+  doc.text('STATUS', 82, tableY + 5.5);
+  doc.text('CLIENT TARGET', 108, tableY + 5.5);
+  doc.text('DELIVERED', 135, tableY + 5.5);
+  doc.text('CLIENT ALTERATION', 162, tableY + 5.5);
 
   tableY += 8;
   
@@ -388,11 +348,11 @@ function drawClientScorecardPage(doc, data) {
         doc.setFontSize(7.5);
         doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
         doc.text('DELIVERABLE (CONT.)', 12, tableY + 5.5);
-        doc.text('PRIORITY', 69, tableY + 5.5);
-        doc.text('STATUS', 86, tableY + 5.5);
-        doc.text('CLIENT TARGET', 114, tableY + 5.5);
-        doc.text('DELIVERED', 142, tableY + 5.5);
-        doc.text('CTR / ATR', 170, tableY + 5.5);
+        doc.text('PRIORITY', 65, tableY + 5.5);
+        doc.text('STATUS', 82, tableY + 5.5);
+        doc.text('CLIENT TARGET', 108, tableY + 5.5);
+        doc.text('DELIVERED', 135, tableY + 5.5);
+        doc.text('CLIENT ALTERATION', 162, tableY + 5.5);
         
         tableY += 8;
         currentRowsOnPage = 0;
@@ -434,18 +394,8 @@ function drawClientScorecardPage(doc, data) {
         delivered = 'Pending';
       }
 
-      // CTR / ATR / Delay status
+      // Delay status
       const isDelayed = job.onTime === false || (job.delayDays && job.delayDays > 0);
-      let ctrAtr = '';
-      const ctrCount = job.clientAlterations || 0;
-      const atrCount = job.agencyAlterations || 0;
-      if (ctrCount > 0 || atrCount > 0) {
-        ctrAtr = `${ctrCount} CTR${atrCount > 0 ? ` | ${atrCount} ATR` : ''}`;
-      } else if (isDelayed && job.delayDays > 0) {
-        ctrAtr = `+${job.delayDays}d delay`;
-      } else {
-        ctrAtr = '0 CTR';
-      }
 
       // Print Deliverable
       doc.setFontSize(7.5);
@@ -458,36 +408,42 @@ function drawClientScorecardPage(doc, data) {
       else if (priority === 'L') doc.setTextColor(234, 88, 12);
       else if (priority === 'M') doc.setTextColor(59, 130, 246);
       else doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-      doc.text(priority, 69, rowY + 5.2);
+      doc.text(priority, 65, rowY + 5.2);
       
       // Print Status
       if (isDelayed) doc.setTextColor(220, 38, 38);
       else if (status.toLowerCase().includes('closed') || status.toLowerCase().includes('completed')) doc.setTextColor(16, 185, 129);
       else doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
       doc.setFont('helvetica', 'normal');
-      doc.text(status, 86, rowY + 5.2);
+      doc.text(status, 82, rowY + 5.2);
       
       // Print Client Target
       doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-      doc.text(clientTarget, 114, rowY + 5.2);
+      doc.text(clientTarget, 108, rowY + 5.2);
 
       // Print Delivered
       if (isDelayed && delivered !== 'Pending') doc.setTextColor(220, 38, 38);
       else doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      doc.text(delivered, 142, rowY + 5.2);
+      doc.text(delivered, 135, rowY + 5.2);
 
-      // Print CTR / ATR
-      if (isDelayed) doc.setTextColor(220, 38, 38);
-      else if (ctrCount > 0) doc.setTextColor(245, 158, 11);
-      else doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
-      doc.text(ctrAtr, 170, rowY + 5.2);
+      // Print Client Alteration
+      const altCount = job.clientAlterations || 0;
+      if (altCount > 0) {
+        doc.setTextColor(245, 158, 11);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${altCount} Alteration${altCount > 1 ? 's' : ''}`, 162, rowY + 5.2);
+      } else {
+        doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+        doc.setFont('helvetica', 'normal');
+        doc.text('0 Alterations', 162, rowY + 5.2);
+      }
       
       currentRowsOnPage++;
     });
   }
 
   // --- ACTIONABLE INSIGHTS (END OF BRAND SCORECARD) ---
-  if (insights.p1 || insights.p3) {
+  if (insights && (insights.p2 || insights.p4)) {
     let finalTableY = tableY + (currentRowsOnPage * 8) + 15;
     
     // Check if we need a new page for insights
@@ -541,8 +497,8 @@ function drawClientScorecardPage(doc, data) {
       return y + boxHeight + 4;
     };
 
-    finalTableY = drawInsight('JSR Calling', insights.p1, finalTableY);
-    finalTableY = drawInsight('Cross-Functional Meeting', insights.p3, finalTableY);
+    if (insights.p2) finalTableY = drawInsight('Delivery Date', insights.p2, finalTableY);
+    if (insights.p4) finalTableY = drawInsight('Proactiveness', insights.p4, finalTableY);
   }
 
 }

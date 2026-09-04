@@ -29,12 +29,19 @@ async function main() {
   const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'manual-update-script', today: new Date() });
 
   console.log(`\n✅ [snapshot-updater] Successfully updated MongoDB snapshot for dateKey: "${snapshot.dateKey}"!`);
-  console.log(`   - Total Brands Scanned: ${snapshot.consolidatedReports?.length || 0}`);
+  console.log(`   - Total Active Pods: ${snapshot.summary?.activeTeamCount || 0}`);
+  console.log(`   - Total Consolidated Brands: ${snapshot.consolidatedReports?.length || 0}`);
   console.log(`   - Scores Processed: ${Object.keys(snapshot.dashboardScores || {}).length}`);
   console.log(`   - Status: ${snapshot.status}`);
+  if (snapshot.consolidatedReports && snapshot.consolidatedReports.length > 0) {
+    console.log('   - Brands included:');
+    snapshot.consolidatedReports.forEach((r, idx) => {
+      console.log(`     ${idx + 1}. ${r.clientName} (${r.podName || 'N/A'}) - Score: ${r.score}% [${r.rating}]`);
+    });
+  }
 
-  console.log('\n[snapshot-updater] Now triggering executive digest email to shourya@cogculture.agency & apoorv@cogculture.agency with updated 25th Aug data...');
-  const recipients = ['shourya@cogculture.agency', 'apoorv@cogculture.agency'];
+  const recipients = ['tanushree@cogculture.agency', 'shourya@cogculture.agency'];
+  console.log(`\n[snapshot-updater] Triggering test digest email to ${recipients.join(', ')}...`);
   const emailRes = await sendManagementDigestFromSnapshot(snapshot, { to: recipients, force: true });
   console.log('[snapshot-updater] Email send result:', emailRes);
 }

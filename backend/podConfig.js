@@ -11,6 +11,23 @@ export const ALLOWED_TEAM_NAMES = ['POD1', 'POD2', 'PANASONIC', 'B2B', 'POD4', '
 // Always CC'd on every pod digest email.
 const ALWAYS_CC = ['vaibhav@cogculture.agency', 'ashok@cogculture.agency', 'shourya@cogculture.agency', 'pallave@cogculture.agency', 'apoorv@cogculture.agency'];
 
+/**
+ * Scoped digest configurations for recipients who should only receive
+ * reports from specific pods (and not the full company/all-team report).
+ */
+export const SCOPED_DIGEST_CONFIG = [
+  {
+    to: ['deepakshi@cogculture.agency', 'shourya@cogculture.agency', 'tanushree@cogculture.agency'],
+    allowedPods: ['POD1', 'POD2', 'POD4'],
+    podName: 'POD 1, POD 2 & POD 4 Summary',
+  },
+  {
+    to: ['khushi@cogculture.agency', 'shourya@cogculture.agency', 'tanushree@cogculture.agency'],
+    allowedPods: ['PANASONIC'],
+    podName: 'Panasonic Summary',
+  },
+];
+
 export const POD_RECIPIENTS = {
   POD1: {
     to: ['nandy@cogculture.agency', 'naveen@cogculture.agency', 'deepakshi@cogculture.agency'],
@@ -37,3 +54,4 @@ export const POD_RECIPIENTS = {
     cc: ALWAYS_CC,
   },
 };
+

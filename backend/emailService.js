@@ -165,8 +165,8 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
 
   // 1. Filter jobs for Section 1: Due Today or Tomorrow
   const dueTodayTomorrowJobs = [];
-  // 2. Filter jobs for Section 2: Overdue past 7 days (diffDays >= -7 && diffDays < 0)
-  const overdue7DaysJobs = [];
+  // 2. Filter jobs for Section 2: All Overdue Deliverables (diffDays < 0)
+  const overdueJobs = [];
 
   for (const report of clientReports || []) {
     for (const job of report.pendingJobs || []) {
@@ -177,8 +177,8 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
       };
       if (job.diffDays === 0 || job.diffDays === 1 || job.dueLabel === 'Today' || job.dueLabel === 'Tomorrow') {
         dueTodayTomorrowJobs.push(item);
-      } else if (job.diffDays !== null && job.diffDays >= -7 && job.diffDays < 0) {
-        overdue7DaysJobs.push(item);
+      } else if (job.diffDays !== null && job.diffDays < 0) {
+        overdueJobs.push(item);
       }
     }
   }
@@ -186,13 +186,13 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
   // Sort dueTodayTomorrowJobs: Today first, then Tomorrow
   dueTodayTomorrowJobs.sort((a, b) => (a.diffDays ?? 0) - (b.diffDays ?? 0));
 
-  // Sort overdue7DaysJobs: Most severely overdue first (e.g. -7, -6, ... -1)
-  overdue7DaysJobs.sort((a, b) => (a.diffDays ?? 0) - (b.diffDays ?? 0));
+  // Sort overdueJobs: Most severely overdue first (e.g. -30, -15, ... -1)
+  overdueJobs.sort((a, b) => (a.diffDays ?? 0) - (b.diffDays ?? 0));
 
   const totalDueCount = dueTodayTomorrowJobs.length;
-  const totalOverdueCount = overdue7DaysJobs.length;
+  const totalOverdueCount = overdueJobs.length;
 
-  const subject = `[JSR Report] ${escapedPodName} - ${totalDueCount} Due Today/Tomorrow & ${totalOverdueCount} Overdue (7d) (${todayStr})`;
+  const subject = `[JSR Report] ${escapedPodName} - ${totalDueCount} Due Today/Tomorrow & ${totalOverdueCount} Overdue (${todayStr})`;
 
   const priorityBadge = (priority) => {
     const isXXL = priority === 'XXL';
@@ -231,7 +231,7 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
         return `
           <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; text-align: center;">
             <p style="margin: 0; font-size: 13.5px; color: #166534; font-weight: 600;">
-              ✅ No XL / XXL deliverables overdue from the past 7 days.
+              ✅ No overdue XL / XXL deliverables.
             </p>
           </div>
         `;
@@ -343,18 +343,18 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
     </div>
   `;
 
-  // Section 2: Overdue past 7 days
+  // Section 2: Overdue Deliverables
   const section2Html = `
     <div style="margin-bottom: 36px;">
       <div style="background: linear-gradient(90deg, #fff7ed 0%, #ffffff 100%); border-left: 4px solid #f97316; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;">
         <h3 style="margin: 0; font-size: 15px; color: #9a3412; font-weight: 700; display: flex; align-items: center;">
-          ⚠️ Overdue XL & XXL Deliverables (Past 7 Days)
+          ⚠️ Overdue XL & XXL Deliverables
           <span style="margin-left: 8px; background: #ffedd5; color: #9a3412; padding: 1px 8px; border-radius: 12px; font-size: 12px; font-weight: 700;">
             ${totalOverdueCount}
           </span>
         </h3>
       </div>
-      ${renderJobsByBrand(overdue7DaysJobs, 'overdue')}
+      ${renderJobsByBrand(overdueJobs, 'overdue')}
     </div>
   `;
 
@@ -401,18 +401,24 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
               }
 
               const rowBg = idx % 2 === 1 ? '#fafafa' : '#ffffff';
+              const escapedClient = escapeHTML(clientName);
+              const escapedPod = rPodName ? escapeHTML(rPodName) : '-';
 
               return `
                 <tr style="background-color: ${rowBg}; border-bottom: 1px solid #f1f5f9;">
-                  <td style="padding: 8px 12px; font-weight: 600; color: #0f172a;">${escapeHTML(clientName)}</td>
-                  <td style="padding: 8px 10px; color: #64748b; font-size: 11.5px;">${escapeHTML(rPodName || '-')}</td>
-                  <td style="padding: 8px 10px; text-align: center; color: #334155;">
-                    ${isUnavail ? '-' : `<strong>${meetingStats.metDays || 0}</strong> / ${meetingStats.elapsedWeekdays || 0}d`}
+                  <td style="padding: 10px 12px; color: #0f172a; font-weight: 600;">
+                    ${escapedClient}
                   </td>
-                  <td style="padding: 8px 12px; text-align: right; font-weight: 700; color: ${pctColor};">
+                  <td style="padding: 10px 10px; color: #475569; font-weight: 500;">
+                    ${escapedPod}
+                  </td>
+                  <td style="padding: 10px 10px; color: #475569; text-align: center;">
+                    ${isUnavail ? '-' : `${meetingStats.metDays ?? 0} / ${meetingStats.elapsedWeekdays ?? 0}d`}
+                  </td>
+                  <td style="padding: 10px 12px; font-weight: 700; color: ${pctColor}; text-align: right;">
                     ${isUnavail ? '-' : `${pct}%`}
                   </td>
-                  <td style="padding: 8px 12px; text-align: center;">
+                  <td style="padding: 10px 12px; text-align: center;">
                     ${healthBadge}
                   </td>
                 </tr>
@@ -425,8 +431,16 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
   `;
 
   const html = `
-    <div style="background-color: #f1f5f9; padding: 24px 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-      <div style="max-width: 720px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05);">
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${escapeHTML(subject)}</title>
+    </head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 20px; -webkit-font-smoothing: antialiased; color: #1e293b;">
+      
+      <div style="max-width: 760px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08); border: 1px solid #e2e8f0;">
         
         <!-- Header -->
         <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 24px; color: #ffffff;">
@@ -442,7 +456,7 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
               🚨 ${totalDueCount} Due Today/Tomorrow
             </span>
             <span style="background: rgba(249, 115, 22, 0.2); border: 1px solid rgba(249, 115, 22, 0.4); color: #fdba74; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
-              ⚠️ ${totalOverdueCount} Overdue (Past 7d)
+              ⚠️ ${totalOverdueCount} Overdue
             </span>
             <span style="background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15); color: #cbd5e1; padding: 4px 10px; border-radius: 20px; font-size: 12px;">
               📅 ${todayStr}

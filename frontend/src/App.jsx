@@ -191,6 +191,7 @@ export default function App() {
           pairId: pair.id,
           dailyId: pair.dailyId,
           jobId: pair.jobId,
+          sowId: pair.sowId || '',
         }));
       }));
       setClients(results.flat());
@@ -536,6 +537,9 @@ export default function App() {
                   onSaveSuccess={() => window.dispatchEvent(new Event('storage'))}
                   onReload={handleReload}
                   meetings={meetings}
+                  sowId={clients.find(c => c.key === selectedClient)?.sowId || activePairs.find(p => p.id === clients.find(c => c.key === selectedClient)?.pairId)?.sowId}
+                  activePair={activePairs.find(p => p.id === clients.find(c => c.key === selectedClient)?.pairId)}
+                  onPairsChanged={(newActivePairs) => setActivePairs(newActivePairs)}
                 />
               </div>
             )}

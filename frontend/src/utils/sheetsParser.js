@@ -500,3 +500,230 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
 
   return records;
 }
+
+/**
+ * Parses the Scope of Work (SOW) 2D array for a specific client tab.
+ * Accurately extracts S.No, Launch Creative, Number of Creative, and Status.
+ *
+ * @param {any[][]} rows      - 2D array from Google Sheets API
+ * @param {string} clientName - Tab / Client name
+ * @returns {{ headers: string[], items: object[] }}
+ */
+export function parseSOWRows(rows, clientName) {
+  if (!rows || !Array.isArray(rows) || rows.length === 0) {
+    return { headers: ['S.No', 'Launch Creative', 'Number of Creative', 'Status as of now'], items: [] };
+  }
+
+  // 1. Locate header row dynamically across first 25 rows
+  let headerRowIdx = -1;
+  let colMap = {
+    sno: -1,
+    launchCreative: -1,
+    numberOfCreative: -1,
+    status: -1,
+    remarks: -1,
+    platforms: -1,
+    sizes: -1,
+  };
+
+  for (let r = 0; r < Math.min(25, rows.length); r++) {
+    const row = rows[r] || [];
+    if (!Array.isArray(row) || row.length === 0) continue;
+
+    let hasSno = false;
+    let hasCreative = false;
+    let tempColMap = {
+      sno: -1,
+      launchCreative: -1,
+      numberOfCreative: -1,
+      status: -1,
+      remarks: -1,
+      platforms: -1,
+      sizes: -1,
+    };
+
+    row.forEach((cell, cIdx) => {
+      if (cell === undefined || cell === null) return;
+      const txt = cell.toString().toLowerCase().trim();
+      if (!txt) return;
+
+      if (txt === 's.no' || txt === 'sno' || txt === 's. no' || txt === 'sr.no' || txt === 'sr no' || txt === 'sl no' || txt === 'sl. no' || txt === 'sr. no.' || txt === 's.no.' || txt === '#') {
+        tempColMap.sno = cIdx;
+        hasSno = true;
+      } else if (txt.includes('number of creative') || txt.includes('no. of creative') || txt.includes('no of creative') || txt.includes('number of creatives') || txt === 'quantity' || txt === 'qty') {
+        tempColMap.numberOfCreative = cIdx;
+      } else if (txt === 'launch creative' || txt === 'creative' || txt === 'deliverable' || txt === 'deliverables' || txt === 'scope of work' || txt === 'particulars' || txt === 'scope' || txt === 'item' || txt === 'task') {
+        tempColMap.launchCreative = cIdx;
+        hasCreative = true;
+      } else if (txt.includes('status') || txt.includes('status as of now')) {
+        tempColMap.status = cIdx;
+      } else if (txt.includes('remark') || txt.includes('notes') || txt.includes('comment')) {
+        tempColMap.remarks = cIdx;
+      } else if (txt.includes('platform') || txt.includes('medium')) {
+        tempColMap.platforms = cIdx;
+      } else if (txt.includes('size') || txt.includes('ratio') || txt.includes('pixel') || txt.includes('dimension')) {
+        tempColMap.sizes = cIdx;
+      }
+    });
+
+    if (hasSno || (hasCreative && (tempColMap.numberOfCreative !== -1 || tempColMap.remarks !== -1))) {
+      headerRowIdx = r;
+      colMap = tempColMap;
+      break;
+    }
+  }
+
+  // If launchCreative column was not explicitly named, pick column after sno
+  if (colMap.launchCreative === -1 && colMap.sno !== -1) {
+    colMap.launchCreative = colMap.sno + 1;
+  }
+  if (colMap.numberOfCreative === -1 && colMap.launchCreative !== -1) {
+    colMap.numberOfCreative = colMap.launchCreative + 1;
+  }
+
+  const items = [];
+  let currentSection = '';
+  const startRow = headerRowIdx !== -1 ? headerRowIdx + 1 : 0;
+
+  for (let i = startRow; i < rows.length; i++) {
+    const row = rows[i] || [];
+    if (!Array.isArray(row) || row.length === 0) continue;
+
+    const nonEmpties = [];
+    row.forEach((cell, c) => {
+      const v = (cell ?? '').toString().trim();
+      if (v.length > 0) {
+        nonEmpties.push({ col: c, val: v });
+      }
+    });
+
+    if (nonEmpties.length === 0) continue;
+
+    const isRepeatHeader = nonEmpties.some(x => {
+      const v = x.val.toLowerCase();
+      return v === 's.no' || v === 'sno' || v === 'launch creative' || v === 'number of creative';
+    });
+    if (isRepeatHeader) continue;
+
+    // Check if section header banner
+    if (nonEmpties.length === 1 || (nonEmpties.length <= 2 && isNaN(nonEmpties[0].val) && (!nonEmpties[1] || isNaN(nonEmpties[1].val)))) {
+      const firstText = nonEmpties[0].val;
+      const lowerFirst = firstText.toLowerCase();
+      if (isNaN(firstText) && firstText.length >= 2 && 
+          !lowerFirst.includes('s.no') && 
+          !lowerFirst.includes('total') && 
+          !lowerFirst.includes('remarks') &&
+          (colMap.sno === -1 || !row[colMap.sno] || isNaN(row[colMap.sno])) &&
+          (colMap.numberOfCreative === -1 || !row[colMap.numberOfCreative])) {
+        currentSection = firstText;
+        items.push({
+          id: `sec-${i}`,
+          isSectionHeader: true,
+          sectionTitle: firstText,
+          sno: '',
+          launchCreative: firstText,
+          numberOfCreative: '',
+          isMonthly: false,
+          remarks: '',
+        });
+        continue;
+      }
+    }
+
+    let snoVal = '';
+    let launchCreativeVal = '';
+    let numCreativeVal = '';
+    let remarksVal = '';
+    let statusVal = '';
+    let platformsVal = '';
+    let sizesVal = '';
+
+    if (colMap.sno !== -1 && row[colMap.sno] !== undefined && row[colMap.sno] !== null) {
+      snoVal = row[colMap.sno].toString().trim();
+    }
+    if (colMap.launchCreative !== -1 && row[colMap.launchCreative] !== undefined && row[colMap.launchCreative] !== null) {
+      launchCreativeVal = row[colMap.launchCreative].toString().trim();
+    }
+    if (colMap.numberOfCreative !== -1 && row[colMap.numberOfCreative] !== undefined && row[colMap.numberOfCreative] !== null) {
+      numCreativeVal = row[colMap.numberOfCreative].toString().trim();
+    }
+    if (colMap.remarks !== -1 && row[colMap.remarks] !== undefined && row[colMap.remarks] !== null) {
+      remarksVal = row[colMap.remarks].toString().trim();
+    }
+    if (colMap.status !== -1 && row[colMap.status] !== undefined && row[colMap.status] !== null) {
+      statusVal = row[colMap.status].toString().trim();
+    }
+    if (colMap.platforms !== -1 && row[colMap.platforms] !== undefined && row[colMap.platforms] !== null) {
+      platformsVal = row[colMap.platforms].toString().trim();
+    }
+    if (colMap.sizes !== -1 && row[colMap.sizes] !== undefined && row[colMap.sizes] !== null) {
+      sizesVal = row[colMap.sizes].toString().trim();
+    }
+
+    // Fallback if header wasn't perfectly mapped
+    if (!launchCreativeVal && nonEmpties.length > 0) {
+      if (!isNaN(nonEmpties[0].val)) {
+        snoVal = snoVal || nonEmpties[0].val;
+        launchCreativeVal = nonEmpties[1]?.val || '';
+        numCreativeVal = numCreativeVal || nonEmpties[2]?.val || '';
+      } else {
+        launchCreativeVal = nonEmpties[0].val;
+        numCreativeVal = numCreativeVal || nonEmpties[1]?.val || '';
+      }
+    }
+
+    if (!launchCreativeVal || launchCreativeVal.length < 2) continue;
+
+    const lowerItem = launchCreativeVal.toLowerCase();
+    if (lowerItem === 'creative' || lowerItem === 'deliverable' || lowerItem === 'scope of work' || 
+        lowerItem === 'particulars' || lowerItem === 's.no' || lowerItem === 'sr.no' || 
+        lowerItem === 'launch creative' || lowerItem === 'total') {
+      continue;
+    }
+
+    // Determine whether this item is Monthly recurring ("months if it is supposed to be months")
+    const combinedLower = `${launchCreativeVal} ${numCreativeVal} ${currentSection} ${remarksVal}`.toLowerCase();
+    const isExplicitMonthly = numCreativeVal.toLowerCase().includes('/month') ||
+                              numCreativeVal.toLowerCase().includes('per month') ||
+                              numCreativeVal.toLowerCase().includes('/ month') ||
+                              numCreativeVal.toLowerCase().includes('monthly') ||
+                              numCreativeVal.toLowerCase().includes('/m') ||
+                              numCreativeVal.toLowerCase().includes('month') ||
+                              combinedLower.includes('/month') ||
+                              combinedLower.includes('per month') ||
+                              combinedLower.includes('monthly retainer') ||
+                              currentSection.toLowerCase().includes('sustenance') ||
+                              currentSection.toLowerCase().includes('digital (monthly)');
+
+    const isExplicitOneTime = numCreativeVal.toLowerCase().includes('one-time') ||
+                              numCreativeVal.toLowerCase().includes('one time') ||
+                              numCreativeVal.toLowerCase().includes('as required') ||
+                              numCreativeVal.toLowerCase().includes('milestone');
+
+    const isMonthly = !isExplicitOneTime && (isExplicitMonthly || (currentSection.toLowerCase().includes('monthly') && !isExplicitOneTime));
+
+    items.push({
+      id: `sow-${i}`,
+      rowIndex: i + 1,
+      isSectionHeader: false,
+      sectionTitle: currentSection,
+      sno: snoVal || (items.filter(x => !x.isSectionHeader).length + 1),
+      launchCreative: launchCreativeVal,
+      numberOfCreative: numCreativeVal || (isMonthly ? 'Monthly' : '1'),
+      isMonthly,
+      remarks: remarksVal,
+      platforms: platformsVal,
+      sizes: sizesVal,
+      status: statusVal,
+    });
+  }
+
+  return {
+    headers: ['S.No', 'Launch Creative', 'Number of Creative', 'Status as of now'],
+    items,
+  };
+}
+
+
+
+

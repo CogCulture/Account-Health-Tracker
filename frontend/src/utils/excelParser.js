@@ -254,9 +254,16 @@ export function parseDailyTrackerRows(workbook, clientName) {
 
   // Extract records
   const records = [];
+  const rowMetaList = sheet['!rows'] || [];
   for (let i = dataStartIdx; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.length === 0) continue;
+
+    // Skip hidden rows (hiddenByUser or hiddenByFilter in Excel)
+    const rowMeta = rowMetaList[i];
+    if (rowMeta && (rowMeta.hidden || rowMeta.hpx === 0 || rowMeta.hpt === 0)) {
+      continue;
+    }
 
     // Check if it is a valid date row (a cell in date column should be present)
     const dateVal = row[colMap.date !== -1 ? colMap.date : 3]; // fallback to index 3
@@ -390,10 +397,17 @@ export function parseJobTrackerRows(workbook, clientName, isPanasonic = false) {
   });
 
   const records = [];
+  const rowMetaList = sheet['!rows'] || [];
   for (let i = hIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.length === 0) {
       continue; // Skip empty rows
+    }
+
+    // Skip hidden rows (hiddenByUser or hiddenByFilter in Excel)
+    const rowMeta = rowMetaList[i];
+    if (rowMeta && (rowMeta.hidden || rowMeta.hpx === 0 || rowMeta.hpt === 0)) {
+      continue;
     }
 
     let jobId = '';

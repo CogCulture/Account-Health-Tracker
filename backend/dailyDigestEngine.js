@@ -2,7 +2,7 @@ import { parseJobTrackerRows, parseDailyTrackerRows, getCommonClientTabs, parseA
 import { calculateHealthScore } from './utils/scoreEngine.js';
 import { sendPodDigestEmail } from './emailService.js';
 import { getTeamsCollection, getDailyDigestSnapshotsCollection } from './db.js';
-import { POD_RECIPIENTS } from './podConfig.js';
+import { POD_RECIPIENTS, SCOPED_DIGEST_CONFIG } from './podConfig.js';
 import { syncJobStatusAging } from './jobStatusTracker.js';
 import crypto from 'node:crypto';
 
@@ -87,15 +87,22 @@ async function getSheetData(sheets, spreadsheetId, tabName, knownTabs = null) {
       () => sheets.spreadsheets.get({
         spreadsheetId,
         ranges: [safeRange],
-        fields: 'sheets.data.rowMetadata.hiddenByFilter,sheets.data.rowMetadata.hiddenByUser',
+        fields: 'sheets.properties.title,sheets.data.startRow,sheets.data.rowMetadata.hiddenByFilter,sheets.data.rowMetadata.hiddenByUser',
       }),
       { label: `rowMetadata:${spreadsheetId}:${matchedTab}` }
     );
-    const rowMetadata = metaRes.data.sheets?.[0]?.data?.[0]?.rowMetadata || [];
-    rowMetadata.forEach((meta, idx) => {
-      if (meta.hiddenByFilter || meta.hiddenByUser) {
-        hiddenRowIndices.add(idx);
-      }
+    const sheetObj = metaRes.data.sheets?.find(s => 
+      (s.properties?.title || '').toLowerCase().trim() === targetLowerTrimmed
+    ) || metaRes.data.sheets?.[0];
+    const sheetDataList = sheetObj?.data || [];
+    sheetDataList.forEach(sheetData => {
+      const startRow = sheetData.startRow || 0;
+      const rowMetadata = sheetData.rowMetadata || [];
+      rowMetadata.forEach((meta, idx) => {
+        if (meta && (meta.hiddenByFilter || meta.hiddenByUser)) {
+          hiddenRowIndices.add(startRow + idx);
+        }
+      });
     });
   } catch (err) {
     console.warn(`[dailyDigestEngine] Could not read hidden-row metadata for "${matchedTab}". Continuing with visible values only. ${err.message}`);
@@ -668,6 +675,81 @@ export async function sendPodDigestsFromSnapshot(snapshot) {
 }
 
 /**
+ * Sends scoped daily digest emails to recipients who should only see a filtered
+ * subset of PODs (e.g. Deepakshi -> POD1, POD2, POD4; Khushi -> Panasonic).
+ */
+export async function sendScopedDigestEmailsFromSnapshot(snapshot, { force = false } = {}) {
+  if (!snapshot?.consolidatedReports || snapshot.consolidatedReports.length === 0) {
+    console.warn('[dailyDigestEngine] Snapshot has no consolidated reports for scoped digests.');
+    return [];
+  }
+
+  const results = [];
+  const snapshots = await getDailyDigestSnapshotsCollection();
+
+  for (const scopedConfig of (SCOPED_DIGEST_CONFIG || [])) {
+    const { to, allowedPods, podName = 'Digest Summary' } = scopedConfig;
+    const normalizedRecipients = normalizeRecipients(to);
+    if (!normalizedRecipients.length) continue;
+
+    const normalizedAllowedPods = (allowedPods || []).map(p => p.trim().toUpperCase());
+    const filteredReports = snapshot.consolidatedReports.filter(r => 
+      normalizedAllowedPods.includes((r.podName || '').trim().toUpperCase())
+    );
+
+    if (filteredReports.length === 0) {
+      console.warn(`[dailyDigestEngine] No matching reports found for scoped digest [${normalizedAllowedPods.join(', ')}] (${normalizedRecipients.join(', ')}). Skipping.`);
+      continue;
+    }
+
+    const scopedSnapshotStub = {
+      dateKey: snapshot.dateKey,
+      consolidatedReports: filteredReports,
+    };
+    const signature = getManagementDigestSignature(scopedSnapshotStub, normalizedRecipients);
+    const sentDigests = snapshot.sentScopedDigests || [];
+    const alreadySent = sentDigests.some(item => item?.signature === signature);
+
+    if (alreadySent && !force) {
+      console.warn(`[dailyDigestEngine] Scoped digest ${snapshot.dateKey} for [${normalizedAllowedPods.join(', ')}] already sent to ${normalizedRecipients.join(', ')}. Skipping duplicate send.`);
+      results.push({ to: normalizedRecipients, allowedPods: normalizedAllowedPods, sent: false, skipped: true, reason: 'duplicate' });
+      continue;
+    }
+
+    console.log(`[dailyDigestEngine] Sending scoped digest "${podName}" ([${normalizedAllowedPods.join(', ')}]) to ${normalizedRecipients.join(', ')}...`);
+    const ok = await sendPodDigestEmail({
+      podName,
+      to: normalizedRecipients,
+      cc: [],
+      clientReports: filteredReports,
+    });
+
+    if (ok) {
+      await snapshots.updateOne(
+        { _id: snapshot._id },
+        {
+          $push: {
+            sentScopedDigests: {
+              signature,
+              recipients: normalizedRecipients,
+              allowedPods: normalizedAllowedPods,
+              sentAt: new Date(),
+              forced: Boolean(force),
+            },
+          },
+          $set: { updatedAt: new Date() },
+        }
+      );
+      results.push({ to: normalizedRecipients, allowedPods: normalizedAllowedPods, sent: true, skipped: false, signature });
+    } else {
+      results.push({ to: normalizedRecipients, allowedPods: normalizedAllowedPods, sent: false, skipped: false, reason: 'email_failed', signature });
+    }
+  }
+
+  return results;
+}
+
+/**
  * Backward-compatible manual digest runner. It now builds/saves a snapshot
  * first, then sends email from that saved snapshot.
  */
@@ -683,6 +765,7 @@ export async function runDailyDigestCheck(sheets, overrideEmail = null) {
 
   await sendPodDigestsFromSnapshot(snapshot);
   await sendManagementDigestFromSnapshot(snapshot);
+  await sendScopedDigestEmailsFromSnapshot(snapshot);
   console.log('[dailyDigestEngine] Daily digest check completed.');
   return snapshot;
 }

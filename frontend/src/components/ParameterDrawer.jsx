@@ -697,7 +697,7 @@ function InternalMeetingDetail({ metrics, clientName, selectedMonth, selectedYea
 /* ── Main drawer ─────────────────────────────────────────────────────── */
 
 const PARAMS = {
-  p1: { title: 'JSR Calling',              sub: 'In-person meetings + daily attendance',  weight: '25%', color: '#60a5fa' },
+  p1: { title: 'Client Calls',              sub: 'In-person meetings + daily attendance',  weight: '25%', color: '#60a5fa' },
   p2: { title: 'Delivery Date',            sub: 'On-time closed deliverable ratio',        weight: '40%', color: '#10B981' },
   p3: { title: 'Cross-Functional Meeting', sub: 'Creative & Management attendance',        weight: '25%', color: '#f59e0b' },
   p4: { title: 'Proactiveness',            sub: 'Initiative task index',             weight: '10%', color: '#a78bfa' },
@@ -723,7 +723,7 @@ export default function ParameterDrawer({ param, scoreData, onClose }) {
   const metaRaw = param ? PARAMS[param] : null;
   const meta = metaRaw ? {
     ...metaRaw,
-    sub: (param === 'p1' && isNoInPersonBrand) ? 'Daily JSR call attendance' : metaRaw.sub
+    sub: (param === 'p1' && isNoInPersonBrand) ? 'Daily client call attendance' : metaRaw.sub
   } : null;
 
   const score = param === 'internal_meeting'
@@ -782,7 +782,7 @@ export default function ParameterDrawer({ param, scoreData, onClose }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
                   <div style={{ width: 9, height: 9, borderRadius: '50%', background: meta.color }} />
                   <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-                    {meta.weight} weight
+                    {param === 'internal_meeting' ? 'Tracking only' : `${meta.weight} weight`}
                   </span>
                 </div>
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>{meta.title}</h3>
@@ -798,18 +798,20 @@ export default function ParameterDrawer({ param, scoreData, onClose }) {
             </div>
 
             {/* Score pill */}
-            <div style={{
-              margin: '1.25rem 1.5rem 0.5rem',
-              padding: '0.85rem 1rem',
-              borderRadius: 10, background: 'var(--card-bg)',
-              border: `1px solid ${meta.color}33`,
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            }}>
-              <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Score this month</span>
-              <span style={{ fontSize: '1.5rem', fontWeight: 800, color: meta.color, lineHeight: 1 }}>
-                {score}<span style={{ fontSize: '0.9rem', fontWeight: 400, color: 'var(--text-muted)' }}>/10</span>
-              </span>
-            </div>
+            {param !== 'internal_meeting' && (
+              <div style={{
+                margin: '1.25rem 1.5rem 0.5rem',
+                padding: '0.85rem 1rem',
+                borderRadius: 10, background: 'var(--card-bg)',
+                border: `1px solid ${meta.color}33`,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Score this month</span>
+                <span style={{ fontSize: '1.5rem', fontWeight: 800, color: meta.color, lineHeight: 1 }}>
+                  {score}<span style={{ fontSize: '0.9rem', fontWeight: 400, color: 'var(--text-muted)' }}>/10</span>
+                </span>
+              </div>
+            )}
 
             {/* Content */}
             <div style={{ padding: '0 1.5rem 1.5rem', overflowY: 'auto', flex: 1 }}>

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import cron from 'node-cron';
 import multer from 'multer';
-import { runDailyDigestCheck, buildAndSaveDailyDigestSnapshot, getLatestDailyDigestSnapshot, sendManagementDigestFromSnapshot } from './dailyDigestEngine.js';
+import { runDailyDigestCheck, buildAndSaveDailyDigestSnapshot, getLatestDailyDigestSnapshot, sendManagementDigestFromSnapshot, sendScopedDigestEmailsFromSnapshot } from './dailyDigestEngine.js';
 import { syncJobStatusAging } from './jobStatusTracker.js';
 import { sendDailyReminderEmail } from './emailService.js';
 import { getTeamsCollection, getMeetingInsightsCollection } from './db.js';
@@ -164,16 +164,23 @@ async function getSheetData(spreadsheetId, tabName) {
     const metaRes = await sheets.spreadsheets.get({
       spreadsheetId,
       ranges: [safeRange],
-      fields: 'sheets.data.rowMetadata.hiddenByFilter,sheets.data.rowMetadata.hiddenByUser',
+      fields: 'sheets.properties.title,sheets.data.startRow,sheets.data.rowMetadata.hiddenByFilter,sheets.data.rowMetadata.hiddenByUser',
     });
-    const rowMetadata = metaRes.data.sheets?.[0]?.data?.[0]?.rowMetadata || [];
-    rowMetadata.forEach((meta, idx) => {
-      if (meta.hiddenByFilter || meta.hiddenByUser) {
-        hiddenRowIndices.add(idx);
-      }
+    const sheetObj = metaRes.data.sheets?.find(s => 
+      (s.properties?.title || '').toLowerCase().trim() === targetLowerTrimmed
+    ) || metaRes.data.sheets?.[0];
+    const sheetDataList = sheetObj?.data || [];
+    sheetDataList.forEach(sheetData => {
+      const startRow = sheetData.startRow || 0;
+      const rowMetadata = sheetData.rowMetadata || [];
+      rowMetadata.forEach((meta, idx) => {
+        if (meta && (meta.hiddenByFilter || meta.hiddenByUser)) {
+          hiddenRowIndices.add(startRow + idx);
+        }
+      });
     });
   } catch (err) {
-    // If metadata fetch fails, proceed with rawValues
+    console.warn(`[server] Could not fetch row metadata for "${matchedTab}":`, err.message);
   }
 
   // Filter out hidden rows efficiently
@@ -248,7 +255,11 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/teams', async (_req, res) => {
   try {
     const collection = await getTeamsCollection();
-    const teams = await collection.find({}).toArray();
+    const rawTeams = await collection.find({}).toArray();
+    const teams = rawTeams.map(t => ({
+      ...t,
+      sowId: t.sowId || ''
+    }));
     res.json({ teams });
   } catch (err) {
     console.error('[server] GET /api/teams error:', err);
@@ -261,7 +272,7 @@ app.get('/api/teams', async (_req, res) => {
  * Saves or updates a team configuration in MongoDB.
  */
 app.post('/api/teams', async (req, res) => {
-  const { id, name, dailyId, jobId, active } = req.body;
+  const { id, name, dailyId, jobId, sowId, active } = req.body;
 
   // Strict type checks to prevent MongoDB query/NoSQL injection
   if (id !== undefined && (typeof id !== 'string' || !id.trim())) {
@@ -277,6 +288,7 @@ app.post('/api/teams', async (req, res) => {
   if (typeof jobId !== 'string' || !jobId.trim()) {
     return res.status(400).json({ error: 'jobId must be a valid non-empty string' });
   }
+  const cleanSowId = (typeof sowId === 'string') ? sowId.trim() : '';
   if (active !== undefined && typeof active !== 'boolean') {
     return res.status(400).json({ error: 'active must be a boolean' });
   }
@@ -287,9 +299,11 @@ app.post('/api/teams', async (req, res) => {
 
     if (id) {
       // Edit existing team in DB
+      const existing = await collection.findOne({ id });
+      const isActive = active !== undefined ? active : (existing?.active ?? true);
       await collection.updateOne(
         { id },
-        { $set: { name: normalizedName, dailyId, jobId, active: active ?? false } }
+        { $set: { name: normalizedName, dailyId, jobId, sowId: cleanSowId, active: isActive } }
       );
       updatedTeam = await collection.findOne({ id });
     } else {
@@ -301,6 +315,7 @@ app.post('/api/teams', async (req, res) => {
         name: normalizedName,
         dailyId,
         jobId,
+        sowId: cleanSowId,
         active: active ?? isFirst
       };
       await collection.insertOne(updatedTeam);
@@ -689,6 +704,22 @@ app.post('/api/daily-digest-snapshot/send-management', alertTriggerLimiter, asyn
     console.error('[server] POST /api/daily-digest-snapshot/send-management error:', err);
     res.status(500).json({ error: err.message || 'Failed to send management digest email.' });
   }
+/**
+ * POST /api/daily-digest-snapshot/send-scoped
+ * Sends scoped digest emails (e.g. Deepakshi -> POD1, POD2, POD4; Khushi -> Panasonic).
+ */
+app.post('/api/daily-digest-snapshot/send-scoped', alertTriggerLimiter, async (req, res) => {
+  try {
+    const snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: true });
+    if (!snapshot) {
+      return res.status(404).json({ error: 'No snapshot found to send scoped digest.' });
+    }
+    const results = await sendScopedDigestEmailsFromSnapshot(snapshot, { force: true });
+    res.json({ success: true, dateKey: snapshot.dateKey, results });
+  } catch (err) {
+    console.error('[server] POST /api/daily-digest-snapshot/send-scoped error:', err);
+    res.status(500).json({ error: err.message || 'Failed to send scoped digest emails.' });
+  }
 });
 
 // ── Background Cron Scheduler ──────────────────────────────────────────────
@@ -729,6 +760,10 @@ if (isCronEnabled) {
       console.log(`[cron] Triggering 11:30 AM management digest email for snapshot dateKey: ${snapshot.dateKey}...`);
       const result = await sendManagementDigestFromSnapshot(snapshot, { force: true });
       console.log('[cron] Scheduled 11:30 AM management digest email result:', result);
+
+      console.log(`[cron] Triggering 11:30 AM scoped digest emails for configured scoped recipients...`);
+      const scopedResults = await sendScopedDigestEmailsFromSnapshot(snapshot, { force: true });
+      console.log('[cron] Scheduled 11:30 AM scoped digest emails result:', scopedResults);
     } catch (err) {
       console.error('[cron] Scheduled 11:30 AM management email trigger failed:', err.message);
     }

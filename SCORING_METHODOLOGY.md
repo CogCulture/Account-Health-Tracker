@@ -14,7 +14,7 @@ $$\text{Final Health Score (\%)} = \max\left(0, \text{Math.round}\left((\text{P1
 
 | Parameter | Metric Name | Scale | Weight | Max Contribution to Overall Score |
 | :--- | :--- | :---: | :---: | :---: |
-| **P1** | **JSR Calling & Meeting Attendance** | 0 – 10 | 2.5x | **25%** |
+| **P1** | **Client Calls & Meeting Attendance** | 0 – 10 | 2.5x | **25%** |
 | **P2** | **Delivery Date & On-Time Ratio** | 0 – 10 | 4.0x | **40%** |
 | **P3** | **Cross-Functional Team Attendance** | 0 – 10 | 2.5x | **25%** |
 | **P4** | **Proactiveness & Initiatives** | 0 – 10 | 1.0x | **10%** |
@@ -22,7 +22,7 @@ $$\text{Final Health Score (\%)} = \max\left(0, \text{Math.round}\left((\text{P1
 
 ---
 
-## 🟢 1. Parameter 1: JSR Calling & Daily Meeting Attendance (25% Weight | Max 10 Pts)
+## 🟢 1. Parameter 1: Client Calls & Daily Meeting Attendance (25% Weight | Max 10 Pts)
 
 Evaluates daily JSR calls logged in the **Daily Tracker** tab for the selected month (evaluating weekdays Mon–Fri up to today).
 

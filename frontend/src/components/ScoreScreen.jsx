@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Calendar, Download, Bookmark, BookmarkCheck, ChevronRight, RefreshCw, AlertTriangle, X, UserCheck, Layers, Briefcase } from 'lucide-react';
+import { Calendar, Download, Bookmark, BookmarkCheck, ChevronRight, RefreshCw, AlertTriangle, X, UserCheck, Layers, Briefcase, FileSpreadsheet, Maximize2 } from 'lucide-react';
 import Chart from 'chart.js/auto';
 import { generateHealthReportPDF } from '../utils/pdfGenerator';
 import ParameterDrawer from './ParameterDrawer';
+import ScopeOfWorkModal from './ScopeOfWorkModal';
 import { computeInternalMeetingMetrics } from '../utils/meetingMatcher';
 import { fetchMeetingInsights } from '../utils/meetingsApi';
 
@@ -11,7 +12,7 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, onSaveSuccess, onReload, meetings = [] }) {
+export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, onSaveSuccess, onReload, meetings = [], sowId, activePair, onPairsChanged }) {
   const { clientName, month, year, scores, metrics, rating, badgeColor, badgeText, ratingBand, insights, solutions, escalationCount, pendingLargeJobs } = scoreData;
   const monthName = MONTH_NAMES[month];
 
@@ -29,6 +30,7 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
   const [showPendingJobsModal, setShowPendingJobsModal] = useState(false);
   const [showEscalationsModal, setShowEscalationsModal] = useState(false);
   const [showAssignedModal, setShowAssignedModal] = useState(false);
+  const [showSowModal, setShowSowModal] = useState(false);
   const [internalMeetingsList, setInternalMeetingsList] = useState(meetings);
 
   useEffect(() => {
@@ -64,6 +66,7 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
     setIsBannerDismissed(false);
     setShowPendingJobsModal(false);
     setShowEscalationsModal(false);
+    setShowSowModal(false);
   }, [clientName]);
 
   const statusCanvasRef = useRef(null);
@@ -521,18 +524,22 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
               <p>{sub}</p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <div className="parameter-points">
-                {score}<span className="parameter-points-max">/10</span>
-              </div>
+              {id !== 'internal_meeting' && (
+                <div className="parameter-points">
+                  {score}<span className="parameter-points-max">/10</span>
+                </div>
+              )}
               <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
             </div>
           </div>
-          <div className="progress-bar-container">
-            <div
-              className="progress-bar-fill"
-              style={{ width: `${(score / 10) * 100}%`, backgroundColor: badgeColor }}
-            />
-          </div>
+          {id !== 'internal_meeting' && (
+            <div className="progress-bar-container">
+              <div
+                className="progress-bar-fill"
+                style={{ width: `${(score / 10) * 100}%`, backgroundColor: badgeColor }}
+              />
+            </div>
+          )}
         </div>
 
         {/* Stat pills */}
@@ -822,7 +829,7 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
 
         {/* 4 Parameter Cards in 2x2 grid */}
         <div className="parameters-grid">
-          <ParamCard id="p1" title="JSR Calling" sub={isNoInPersonBrand ? "Daily JSR call attendance" : "In-person meetings + daily attendance"} score={scores.p1} />
+          <ParamCard id="p1" title="Client Calls" sub={isNoInPersonBrand ? "Daily client call attendance" : "In-person meetings + daily attendance"} score={scores.p1} />
           <ParamCard id="p2" title="Delivery Date" sub="Ratio of on-time closed deliverables" score={scores.p2} />
           <ParamCard id="p3" title="Cross-Functional Meeting" sub="Creative & Management attendances" score={scores.p3} />
           <ParamCard id="internal_meeting" title="Internal Meeting" sub="Daily internal syncs & attendees" score={internalMeetingMetrics.score} />
@@ -835,31 +842,65 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
         <ParamCard id="p4" title="Proactiveness" sub="Initiative task index" score={scores.p4} />
 
         {/* Deliverables This Month Section */}
-        <div className="glass-card" style={{ padding: '1.6rem 1.75rem', display: 'flex', flexDirection: 'column' }}>
+        <div 
+          className="glass-card deliverables-interactive-card" 
+          style={{ padding: '1.6rem 1.75rem', display: 'flex', flexDirection: 'column' }}
+          onClick={() => setShowSowModal(true)}
+          title="Click to open Scope of Work & Deliverables breakdown"
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
               <div style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', padding: '0.5rem', borderRadius: '10px', color: '#3B82F6' }}>
                 <Layers size={20} />
               </div>
               <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  DELIVERABLES THIS MONTH
-                </h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    DELIVERABLES THIS MONTH
+                  </h3>
+                  <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--accent-primary)', background: 'var(--accent-glow)', padding: '0.1rem 0.45rem', borderRadius: '4px' }}>
+                    SOW View ↗
+                  </span>
+                </div>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.15rem 0 0 0' }}>
                   Deliverable counts grouped by category for {monthName} {year}
                 </p>
               </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
               <span style={{
                 fontSize: '0.8rem', fontWeight: 700,
                 padding: '0.35rem 0.85rem', borderRadius: '20px',
                 backgroundColor: 'rgba(59, 130, 246, 0.12)', color: '#3B82F6',
                 border: '1px solid rgba(59, 130, 246, 0.25)'
               }}>
-                Total Deliverables: {(metrics?.p2?.allMonthJobs || metrics?.p2?.jobs || []).length}
+                Total: {(metrics?.p2?.allMonthJobs || metrics?.p2?.jobs || []).length}
               </span>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowSowModal(true);
+                }}
+                className="btn btn-secondary"
+                style={{
+                  fontSize: '0.76rem',
+                  padding: '0.32rem 0.75rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  borderRadius: '20px',
+                  background: 'rgba(59, 130, 246, 0.15)',
+                  color: '#3B82F6',
+                  border: '1px solid rgba(59, 130, 246, 0.3)'
+                }}
+              >
+                <FileSpreadsheet size={13} />
+                <span>Scope of Work</span>
+                <ChevronRight size={13} />
+              </button>
             </div>
           </div>
 
@@ -1262,6 +1303,20 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
         param={openParam}
         scoreData={scoreData}
         onClose={() => setOpenParam(null)}
+      />
+
+      {/* Scope of Work & Deliverables Split Modal */}
+      <ScopeOfWorkModal
+        isOpen={showSowModal}
+        onClose={() => setShowSowModal(false)}
+        clientName={clientName}
+        month={month}
+        year={year}
+        monthName={monthName}
+        sowId={sowId}
+        jobRows={metrics?.p2?.allMonthJobs || metrics?.p2?.jobs || scoreData.jobsList || []}
+        activePair={activePair}
+        onPairsChanged={onPairsChanged}
       />
     </div>
   );

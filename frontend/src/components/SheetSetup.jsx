@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Link2, HeartPulse, Plus, Trash2, Check, Pencil, ChevronDown } from 'lucide-react';
+import { Link2, HeartPulse, Plus, Trash2, Check, Pencil, ChevronDown, RefreshCw, AlertCircle } from 'lucide-react';
 import { apiUrl } from '../utils/apiClient';
 
-// Team name is now used to route the daily digest email to the right POD's
-// recipients (see backend/podConfig.js), so it must be one of these values.
 const TEAM_NAMES = ['POD1', 'POD2', 'PANASONIC', 'B2B', 'POD4', 'SRHU'];
 
 function extractSheetId(input) {
@@ -14,20 +12,55 @@ function extractSheetId(input) {
   return null;
 }
 
+function formatSheetUrl(idOrUrl) {
+  if (!idOrUrl) return '';
+  if (idOrUrl.startsWith('http://') || idOrUrl.startsWith('https://')) return idOrUrl;
+  return `https://docs.google.com/spreadsheets/d/${idOrUrl}`;
+}
+
 // ── Pair form ─────────────────────────────────────────────────────────────────
 
 function PairForm({ initial, onSave, onCancel }) {
   const [name, setName] = useState(initial?.name || TEAM_NAMES[0]);
-  const [dailyUrl, setDailyUrl] = useState(initial?.dailyId || '');
-  const [jobUrl, setJobUrl] = useState(initial?.jobId || '');
+  const [dailyUrl, setDailyUrl] = useState(formatSheetUrl(initial?.dailyId));
+  const [jobUrl, setJobUrl] = useState(formatSheetUrl(initial?.jobId));
+  const [sowUrl, setSowUrl] = useState(formatSheetUrl(initial?.sowId));
   const [error, setError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handle = () => {
+  const handle = async () => {
+    setError('');
     const dailyId = extractSheetId(dailyUrl);
     const jobId = extractSheetId(jobUrl);
-    if (!dailyId) { setError('Could not extract a valid ID from the Daily Tracker URL.'); return; }
-    if (!jobId) { setError('Could not extract a valid ID from the Job Tracker URL.'); return; }
-    onSave({ name, dailyId, jobId });
+    const sowId = sowUrl.trim() ? extractSheetId(sowUrl) : '';
+
+    if (!dailyId) { 
+      setError('Could not extract a valid ID from the Daily Tracker URL.'); 
+      return; 
+    }
+    if (!jobId) { 
+      setError('Could not extract a valid ID from the Job Tracker URL.'); 
+      return; 
+    }
+    if (sowUrl.trim() && !sowId) { 
+      setError('Could not extract a valid ID from the Scope of Work (SOW) URL.'); 
+      return; 
+    }
+
+    setIsSaving(true);
+    try {
+      await onSave({ 
+        name, 
+        dailyId, 
+        jobId, 
+        sowId, 
+        active: initial?.active ?? true 
+      });
+    } catch (err) {
+      setError(err.message || 'Failed to save configuration.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const iconStyle = { position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' };
@@ -62,17 +95,36 @@ function PairForm({ initial, onSave, onCancel }) {
             value={jobUrl} onChange={e => { setJobUrl(e.target.value); setError(''); }} />
         </div>
       </div>
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <label className="form-label" style={{ fontSize: '0.75rem' }}>Scope of Work (SOW) Sheet URL</label>
+          <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Optional</span>
+        </div>
+        <div style={{ position: 'relative' }}>
+          <Link2 size={14} style={iconStyle} />
+          <input className="form-control" style={{ paddingLeft: '2.2rem', fontSize: '0.88rem' }}
+            placeholder="https://docs.google.com/spreadsheets/d/..."
+            value={sowUrl} onChange={e => { setSowUrl(e.target.value); setError(''); }} />
+        </div>
+      </div>
       {error && (
-        <div style={{ fontSize: '0.82rem', color: '#EF4444', padding: '0.55rem 0.85rem', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-          {error}
+        <div style={{ fontSize: '0.82rem', color: '#EF4444', padding: '0.55rem 0.85rem', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <AlertCircle size={15} />
+          <span>{error}</span>
         </div>
       )}
       <div style={{ display: 'flex', gap: '0.6rem' }}>
-        <button className="btn btn-primary" style={{ flex: 1 }} onClick={handle}
-          disabled={!dailyUrl.trim() || !jobUrl.trim()}>
-          Save Team Sheets
+        <button 
+          type="button"
+          className="btn btn-primary" 
+          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }} 
+          onClick={handle}
+          disabled={isSaving || !dailyUrl.trim() || !jobUrl.trim()}
+        >
+          {isSaving && <RefreshCw size={14} className="spin" />}
+          <span>{isSaving ? 'Saving…' : 'Save Team Sheets'}</span>
         </button>
-        {onCancel && <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>}
+        {onCancel && <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={isSaving}>Cancel</button>}
       </div>
     </div>
   );
@@ -100,38 +152,48 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
   };
 
   useEffect(() => {
-    fetchTeams();
+    if (open) {
+      fetchTeams();
+    }
   }, [open]);
 
-  const handleAdd = async ({ name, dailyId, jobId }) => {
+  const handleAdd = async ({ name, dailyId, jobId, sowId, active }) => {
     try {
       const res = await fetch(apiUrl('/api/teams'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, dailyId, jobId }),
+        body: JSON.stringify({ name, dailyId, jobId, sowId, active }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to add team');
+      }
       setPairs(data.teams);
       onPairsChanged(data.teams.filter(t => t.active));
       setAdding(false);
     } catch (err) {
       console.error('Failed to add team:', err);
+      throw err;
     }
   };
 
-  const handleEdit = async (id, { name, dailyId, jobId }) => {
+  const handleEdit = async (id, { name, dailyId, jobId, sowId, active }) => {
     try {
       const res = await fetch(apiUrl('/api/teams'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, name, dailyId, jobId }),
+        body: JSON.stringify({ id, name, dailyId, jobId, sowId, active }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update team');
+      }
       setPairs(data.teams);
       onPairsChanged(data.teams.filter(t => t.active));
       setEditingId(null);
     } catch (err) {
       console.error('Failed to edit team:', err);
+      throw err;
     }
   };
 
@@ -150,6 +212,7 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
 
   const handleToggleActive = async (id) => {
     const target = pairs.find(p => p.id === id);
+    if (!target) return;
     const activeCount = pairs.filter(p => p.active).length;
     if (target.active && activeCount === 1) return;
 
@@ -170,34 +233,6 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
   const handleClose = () => { setAdding(false); setEditingId(null); onClose(); };
 
   if (!open) return null;
-
-  // First-run: no teams at all → full-screen onboarding
-  if (!isLoading && pairs.length === 0) {
-    return (
-      <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }}>
-        <div style={{ width: '100%', maxWidth: '480px', background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 16, padding: '2rem', boxShadow: '0 24px 60px rgba(0,0,0,0.5)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1.75rem' }}>
-            <HeartPulse size={22} style={{ color: 'var(--accent-primary)' }} />
-            <span style={{ fontSize: '1rem', fontWeight: 700 }}>Account Health Dashboard</span>
-          </div>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '0.3rem' }}>Connect your Google Sheets</h2>
-          <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-            Add your first team sheets. You can add more teams later from the sidebar.
-          </p>
-          <PairForm onSave={handleAdd} />
-
-          <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
-            <button
-              onClick={handleClose}
-              style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '0.85rem', cursor: 'pointer', textDecoration: 'underline' }}
-            >
-              Continue without adding / already added
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <>
@@ -222,7 +257,12 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
         {/* List + form */}
         <div style={{ overflowY: 'auto', padding: '1.1rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
 
-          {pairs.map(pair => (
+          {isLoading ? (
+            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+              <RefreshCw size={24} className="spin" style={{ color: 'var(--accent-primary)', marginBottom: '0.5rem' }} />
+              <p style={{ fontSize: '0.85rem' }}>Loading teams…</p>
+            </div>
+          ) : pairs.map(pair => (
             <div key={pair.id}>
               {editingId === pair.id ? (
                 <div style={{ padding: '1rem', borderRadius: 10, border: '1px solid var(--accent-primary)', background: 'var(--card-bg)' }}>
@@ -244,7 +284,18 @@ export default function SheetSetup({ open, onClose, onPairsChanged }) {
                     {pair.active && <Check size={12} color="#fff" />}
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>{pair.name}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>{pair.name}</span>
+                      {pair.sowId ? (
+                        <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '0.1rem 0.4rem', borderRadius: '4px', background: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                          SOW Linked
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-muted)' }}>
+                          No SOW
+                        </span>
+                      )}
+                    </div>
                     <div style={{ fontSize: '0.72rem', color: pair.active ? 'var(--accent-primary)' : 'var(--text-muted)', marginTop: 2 }}>
                       {pair.active ? 'Active' : 'Inactive — click to enable'}
                     </div>
