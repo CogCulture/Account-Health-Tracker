@@ -8,8 +8,8 @@
 
 export const ALLOWED_TEAM_NAMES = ['POD1', 'POD2', 'PANASONIC', 'B2B', 'POD4', 'SRHU'];
 
-// Always CC'd on every pod digest email.
-const ALWAYS_CC = ['vaibhav@cogculture.agency', 'ashok@cogculture.agency', 'shourya@cogculture.agency', 'pallave@cogculture.agency', 'apoorv@cogculture.agency'];
+// Always CC'd on every pod digest email / Management Digest.
+const ALWAYS_CC = ['vaibhav@cogculture.agency', 'ashok@cogculture.agency', 'shourya@cogculture.agency', 'pallave@cogculture.agency', 'apoorv@cogculture.agency', 'tanushree@cogculture.agency'];
 
 /**
  * Scoped digest configurations for recipients who should only receive
