@@ -292,9 +292,15 @@ export default function ScopeOfWorkModal({
   };
 
   useEffect(() => {
+    setSowData(null);
+  }, [clientName]);
+
+  useEffect(() => {
     if (isOpen) {
       if (sowId) {
-        loadSOWData(sowId);
+        if (!sowData) {
+          loadSOWData(sowId);
+        }
       } else {
         setSowData(null);
       }

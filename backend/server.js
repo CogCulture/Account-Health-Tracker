@@ -117,18 +117,66 @@ try {
 
 const sheets = google.sheets({ version: 'v4', auth });
 
-// ── Helper with In-Memory Caching & Exponential Backoff Retry ───────────────
+// ── Concurrency-Limited Queue & In-Memory Caching for Google Sheets API ───────
 const tabsCache = new Map(); // { sheetId: { tabs: [...], timestamp: number } }
-const TABS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const TABS_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
-const dataCache = new Map();
-const DATA_CACHE_TTL_MS = 45 * 1000; // 45s caching to prevent Google Sheets 60 req/min quota overflow
+const dataCache = new Map(); // { key: { data: [...], timestamp: number } }
+const DATA_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-async function callWithRetry(fn, retries = 4, initialDelay = 1500) {
+// In-flight promise coalescing to deduplicate concurrent requests for identical data
+const inFlightRequests = new Map();
+
+// Concurrency queue to ensure Google's 60 req/min quota is never exceeded
+class RateLimitedQueue {
+  constructor(maxConcurrent = 2, minIntervalMs = 250) {
+    this.maxConcurrent = maxConcurrent;
+    this.minIntervalMs = minIntervalMs;
+    this.running = 0;
+    this.queue = [];
+    this.lastCallTime = 0;
+  }
+
+  async enqueue(fn) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ fn, resolve, reject });
+      this.dequeue();
+    });
+  }
+
+  async dequeue() {
+    if (this.running >= this.maxConcurrent || this.queue.length === 0) return;
+
+    const now = Date.now();
+    const elapsed = now - this.lastCallTime;
+    if (elapsed < this.minIntervalMs) {
+      setTimeout(() => this.dequeue(), this.minIntervalMs - elapsed);
+      return;
+    }
+
+    const { fn, resolve, reject } = this.queue.shift();
+    this.running++;
+    this.lastCallTime = Date.now();
+
+    try {
+      const result = await fn();
+      resolve(result);
+    } catch (err) {
+      reject(err);
+    } finally {
+      this.running--;
+      setTimeout(() => this.dequeue(), this.minIntervalMs);
+    }
+  }
+}
+
+const sheetsQueue = new RateLimitedQueue(2, 250); // max 2 concurrent, at least 250ms spacing
+
+async function callWithRetry(fn, retries = 5, initialDelay = 2000) {
   let delay = initialDelay;
   for (let i = 0; i <= retries; i++) {
     try {
-      return await fn();
+      return await sheetsQueue.enqueue(fn);
     } catch (err) {
       const msg = (err.message || '').toLowerCase();
       const isQuotaError = 
@@ -136,7 +184,8 @@ async function callWithRetry(fn, retries = 4, initialDelay = 1500) {
         err.status === 429 || 
         msg.includes('quota') || 
         msg.includes('rate limit') || 
-        msg.includes('read requests');
+        msg.includes('read requests') ||
+        msg.includes('user rate limit');
 
       if (isQuotaError && i < retries) {
         console.warn(`[server/sheets] Google Sheets rate limit hit. Retrying in ${delay}ms (attempt ${i + 1}/${retries})...`);
@@ -154,13 +203,34 @@ async function getSheetTabs(spreadsheetId) {
   if (cached && (Date.now() - cached.timestamp < TABS_CACHE_TTL_MS)) {
     return cached.tabs;
   }
-  const res = await callWithRetry(() => sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'sheets.properties.title',
-  }));
-  const tabs = res.data.sheets.map(s => s.properties.title);
-  tabsCache.set(spreadsheetId, { tabs, timestamp: Date.now() });
-  return tabs;
+
+  const inFlightKey = `tabs__${spreadsheetId}`;
+  if (inFlightRequests.has(inFlightKey)) {
+    return inFlightRequests.get(inFlightKey);
+  }
+
+  const fetchPromise = (async () => {
+    try {
+      const res = await callWithRetry(() => sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties.title',
+      }));
+      const tabs = res.data.sheets.map(s => s.properties.title);
+      tabsCache.set(spreadsheetId, { tabs, timestamp: Date.now() });
+      return tabs;
+    } catch (err) {
+      if (cached?.tabs) {
+        console.warn(`[server/sheets] Error fetching tabs for ${spreadsheetId}, returning stale cache.`);
+        return cached.tabs;
+      }
+      throw err;
+    } finally {
+      inFlightRequests.delete(inFlightKey);
+    }
+  })();
+
+  inFlightRequests.set(inFlightKey, fetchPromise);
+  return fetchPromise;
 }
 
 async function getSheetData(spreadsheetId, tabName) {
@@ -170,55 +240,43 @@ async function getSheetData(spreadsheetId, tabName) {
     return cached.data;
   }
 
-  // Fetch actual tab names from the spreadsheet (uses 5-min cache)
-  const actualTabs = await getSheetTabs(spreadsheetId);
-  
-  // Find a case-insensitive, trimmed match, defaulting to the original tabName if not found
-  const targetLowerTrimmed = tabName.toLowerCase().trim();
-  const matchedTab = actualTabs.find(t => t.toLowerCase().trim() === targetLowerTrimmed) || tabName;
-
-  const safeRange = `'${matchedTab.replace(/'/g, "''")}'`;
-
-  // 1. Fetch cell values using lightweight values.get API call with backoff retry
-  const valuesRes = await callWithRetry(() => sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: safeRange,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-    dateTimeRenderOption: 'SERIAL_NUMBER',
-  }));
-
-  const rawValues = valuesRes.data.values || [];
-
-  // 2. Fetch row metadata (hidden status) gracefully
-  let hiddenRowIndices = new Set();
-  try {
-    const metaRes = await callWithRetry(() => sheets.spreadsheets.get({
-      spreadsheetId,
-      ranges: [safeRange],
-      fields: 'sheets.properties.title,sheets.data.startRow,sheets.data.rowMetadata.hiddenByFilter,sheets.data.rowMetadata.hiddenByUser',
-    }), 2, 1000);
-    const sheetObj = metaRes.data.sheets?.find(s => 
-      (s.properties?.title || '').toLowerCase().trim() === targetLowerTrimmed
-    ) || metaRes.data.sheets?.[0];
-    const sheetDataList = sheetObj?.data || [];
-    sheetDataList.forEach(sheetData => {
-      const startRow = sheetData.startRow || 0;
-      const rowMetadata = sheetData.rowMetadata || [];
-      rowMetadata.forEach((meta, idx) => {
-        if (meta && (meta.hiddenByFilter || meta.hiddenByUser)) {
-          hiddenRowIndices.add(startRow + idx);
-        }
-      });
-    });
-  } catch (err) {
-    console.warn(`[server] Could not fetch row metadata for "${matchedTab}":`, err.message);
+  const inFlightKey = `data__${cacheKey}`;
+  if (inFlightRequests.has(inFlightKey)) {
+    return inFlightRequests.get(inFlightKey);
   }
 
-  // Filter out hidden rows efficiently
-  const visible2DArray = rawValues.filter((_, idx) => !hiddenRowIndices.has(idx));
+  const fetchPromise = (async () => {
+    try {
+      // 1. Fetch tabs (from cache)
+      const actualTabs = await getSheetTabs(spreadsheetId);
+      const targetLowerTrimmed = tabName.toLowerCase().trim();
+      const matchedTab = actualTabs.find(t => t.toLowerCase().trim() === targetLowerTrimmed) || tabName;
+      const safeRange = `'${matchedTab.replace(/'/g, "''")}'`;
 
-  dataCache.set(cacheKey, { data: visible2DArray, timestamp: Date.now() });
-  return visible2DArray;
+      // 2. Fetch values directly with retry and rate-limiting
+      const valuesRes = await callWithRetry(() => sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: safeRange,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+        dateTimeRenderOption: 'SERIAL_NUMBER',
+      }));
+
+      const rawValues = valuesRes.data.values || [];
+      dataCache.set(cacheKey, { data: rawValues, timestamp: Date.now() });
+      return rawValues;
+    } catch (err) {
+      if (cached?.data) {
+        console.warn(`[server/sheets] Error fetching data for "${tabName}", returning stale cache.`);
+        return cached.data;
+      }
+      throw err;
+    } finally {
+      inFlightRequests.delete(inFlightKey);
+    }
+  })();
+
+  inFlightRequests.set(inFlightKey, fetchPromise);
+  return fetchPromise;
 }
 
 
