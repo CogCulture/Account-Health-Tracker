@@ -7,7 +7,14 @@ try {
   // ignore if custom DNS cannot be set
 }
 
-const uri = process.env.MONGODB_URI;
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+import dotenv from 'dotenv';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: resolve(__dirname, '.env') });
+dotenv.config();
+
 let client;
 let db;
 
@@ -17,6 +24,7 @@ let db;
  */
 export async function connectToDatabase() {
   if (db) return db;
+  const uri = process.env.MONGODB_URI;
   if (!uri) {
     console.error('[db] MONGODB_URI is not configured in environment variables.');
     throw new Error('MONGODB_URI is required.');

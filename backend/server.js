@@ -1,12 +1,17 @@
-import 'dotenv/config';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+import dotenv from 'dotenv';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: resolve(__dirname, '.env') });
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { google } from 'googleapis';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
 import cron from 'node-cron';
 import multer from 'multer';
 import { runDailyDigestCheck, buildAndSaveDailyDigestSnapshot, getLatestDailyDigestSnapshot, sendManagementDigestFromSnapshot, sendScopedDigestEmailsFromSnapshot } from './dailyDigestEngine.js';
@@ -17,8 +22,6 @@ import { ALLOWED_TEAM_NAMES } from './podConfig.js';
 import { transcribeAudio, extractMeetingInsights } from './mistralService.js';
 import { listRecentMeetings, meetingTranscriptToText } from './fathomService.js';
 import { fetchGranolaMeetingEmails, getAuthStatus } from './gmailService.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -114,23 +117,51 @@ try {
 
 const sheets = google.sheets({ version: 'v4', auth });
 
-// ── Helper with In-Memory Caching ───────────────────────────────────────────
+// ── Helper with In-Memory Caching & Exponential Backoff Retry ───────────────
 const tabsCache = new Map(); // { sheetId: { tabs: [...], timestamp: number } }
 const TABS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+const dataCache = new Map();
+const DATA_CACHE_TTL_MS = 45 * 1000; // 45s caching to prevent Google Sheets 60 req/min quota overflow
+
+async function callWithRetry(fn, retries = 4, initialDelay = 1500) {
+  let delay = initialDelay;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = (err.message || '').toLowerCase();
+      const isQuotaError = 
+        err.code === 429 || 
+        err.status === 429 || 
+        msg.includes('quota') || 
+        msg.includes('rate limit') || 
+        msg.includes('read requests');
+
+      if (isQuotaError && i < retries) {
+        console.warn(`[server/sheets] Google Sheets rate limit hit. Retrying in ${delay}ms (attempt ${i + 1}/${retries})...`);
+        await new Promise(r => setTimeout(r, delay));
+        delay *= 2;
+      } else {
+        throw err;
+      }
+    }
+  }
+}
 
 async function getSheetTabs(spreadsheetId) {
   const cached = tabsCache.get(spreadsheetId);
   if (cached && (Date.now() - cached.timestamp < TABS_CACHE_TTL_MS)) {
     return cached.tabs;
   }
-  const res = await sheets.spreadsheets.get({ spreadsheetId });
+  const res = await callWithRetry(() => sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties.title',
+  }));
   const tabs = res.data.sheets.map(s => s.properties.title);
   tabsCache.set(spreadsheetId, { tabs, timestamp: Date.now() });
   return tabs;
 }
-
-const dataCache = new Map();
-const DATA_CACHE_TTL_MS = 0; // Set to 0 to ensure live sheet updates reflect immediately
 
 async function getSheetData(spreadsheetId, tabName) {
   const cacheKey = `${spreadsheetId}__${tabName.toLowerCase().trim()}`;
@@ -148,24 +179,24 @@ async function getSheetData(spreadsheetId, tabName) {
 
   const safeRange = `'${matchedTab.replace(/'/g, "''")}'`;
 
-  // 1. Fetch cell values using lightweight values.get API call
-  const valuesRes = await sheets.spreadsheets.values.get({
+  // 1. Fetch cell values using lightweight values.get API call with backoff retry
+  const valuesRes = await callWithRetry(() => sheets.spreadsheets.values.get({
     spreadsheetId,
     range: safeRange,
     valueRenderOption: 'UNFORMATTED_VALUE',
     dateTimeRenderOption: 'SERIAL_NUMBER',
-  });
+  }));
 
   const rawValues = valuesRes.data.values || [];
 
-  // 2. Fetch row metadata (hidden status) without full heavy cell gridData
+  // 2. Fetch row metadata (hidden status) gracefully
   let hiddenRowIndices = new Set();
   try {
-    const metaRes = await sheets.spreadsheets.get({
+    const metaRes = await callWithRetry(() => sheets.spreadsheets.get({
       spreadsheetId,
       ranges: [safeRange],
       fields: 'sheets.properties.title,sheets.data.startRow,sheets.data.rowMetadata.hiddenByFilter,sheets.data.rowMetadata.hiddenByUser',
-    });
+    }), 2, 1000);
     const sheetObj = metaRes.data.sheets?.find(s => 
       (s.properties?.title || '').toLowerCase().trim() === targetLowerTrimmed
     ) || metaRes.data.sheets?.[0];
@@ -189,6 +220,7 @@ async function getSheetData(spreadsheetId, tabName) {
   dataCache.set(cacheKey, { data: visible2DArray, timestamp: Date.now() });
   return visible2DArray;
 }
+
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
@@ -244,6 +276,14 @@ app.get('/api/sheets/data', async (req, res) => {
  */
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+/**
+ * GET /
+ * Root landing endpoint.
+ */
+app.get('/', (_req, res) => {
+  res.send('<h3>Account Health Tracker Backend is running.</h3><p>Open the dashboard at <a href="http://localhost:5173">http://localhost:5173</a></p>');
 });
 
 // ── Teams CRUD Configuration API ──────────────────────────────────────────────

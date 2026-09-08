@@ -1611,7 +1611,11 @@ a:hover {
 }
 
 .sow-panel-header {
-  padding: 0.85rem 1.4rem;
+  height: 52px;
+  min-height: 52px;
+  max-height: 52px;
+  box-sizing: border-box;
+  padding: 0 1.4rem;
   border-bottom: 1px solid var(--card-border);
   background: rgba(255, 255, 255, 0.02);
   display: flex;
@@ -1619,7 +1623,6 @@ a:hover {
   align-items: center;
   flex-shrink: 0;
   gap: 0.5rem;
-  flex-wrap: wrap;
 }
 
 .sow-panel-title {
@@ -1628,6 +1631,7 @@ a:hover {
   color: var(--text-primary);
   letter-spacing: 0.05em;
   text-transform: uppercase;
+  line-height: 1;
 }
 
 .sow-count-badge {
@@ -1637,6 +1641,7 @@ a:hover {
   border-radius: 12px;
   background: rgba(59, 130, 246, 0.15);
   color: #3B82F6;
+  line-height: 1.2;
 }
 
 .sow-filter-pill {
@@ -1713,12 +1718,17 @@ a:hover {
   letter-spacing: 0.06em;
   border-bottom: 1px solid var(--card-border);
   white-space: nowrap;
+  height: 44px;
+  box-sizing: border-box;
+  vertical-align: middle;
+  line-height: 1.2;
 }
 
 .sow-data-table td {
   padding: 0.75rem 1.2rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   vertical-align: middle;
+  box-sizing: border-box;
 }
 
 .sow-data-table tbody tr {
@@ -1743,24 +1753,69 @@ a:hover {
   padding: 0.22rem 0.6rem;
   border-radius: 6px;
   white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.sow-badge:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
 }
 
 .sow-badge-monthly {
-  background: rgba(99, 102, 241, 0.14);
-  color: #818CF8;
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  background: rgba(139, 92, 246, 0.15);
+  color: #A78BFA;
+  border: 1px solid rgba(139, 92, 246, 0.35);
 }
 
 .sow-badge-done {
-  background: rgba(16, 185, 129, 0.14);
+  background: rgba(16, 185, 129, 0.15);
   color: #10B981;
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.sow-badge-ctr {
+  background: rgba(245, 158, 11, 0.15);
+  color: #F59E0B;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.sow-badge-atr {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3B82F6;
+  border: 1px solid rgba(59, 130, 246, 0.35);
 }
 
 .sow-badge-not-done {
-  background: rgba(245, 158, 11, 0.14);
-  color: #F59E0B;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(239, 68, 68, 0.12);
+  color: #EF4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* Modal Expanded state */
+.sow-modal-container.expanded {
+  width: 98%;
+  max-width: 1680px;
+  height: 92vh;
+  max-height: 960px;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sow-modal-body.expanded {
+  grid-template-columns: 1fr;
+}
+
+.sow-modal-body.expanded .sow-panel.left-panel {
+  border-right: none;
+}
+
+.sow-expand-btn {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sow-expand-btn:hover {
+  transform: translateY(-1px);
 }
 
 /* Job status pills on right side */

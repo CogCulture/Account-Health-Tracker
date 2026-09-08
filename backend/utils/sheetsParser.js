@@ -489,13 +489,18 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
  */
 export function parseSOWRows(rows, clientName) {
   if (!rows || !Array.isArray(rows) || rows.length === 0) {
-    return { headers: ['S.No', 'Launch Creative', 'Number of Creative', 'Status as of now'], items: [] };
+    return { 
+      headers: ['S.No', 'Deliverable / Scope of Work', 'Quantity / Frequency', 'Status'],
+      allHeaders: ['S.No', 'Deliverable / Scope of Work', 'Quantity / Frequency', 'Status'],
+      firstThreeHeaders: ['S.No', 'Deliverable / Scope of Work', 'Quantity / Frequency'],
+      items: [] 
+    };
   }
 
   // 1. Locate header row dynamically across first 25 rows
   let headerRowIdx = -1;
-  let colMap = {
-    sno: -1,
+  let rawColMap = {
+    sno: [],
     launchCreative: -1,
     numberOfCreative: -1,
     status: -1,
@@ -508,60 +513,130 @@ export function parseSOWRows(rows, clientName) {
     const row = rows[r] || [];
     if (!Array.isArray(row) || row.length === 0) continue;
 
-    let hasSno = false;
-    let hasCreative = false;
-    let tempColMap = {
-      sno: -1,
-      launchCreative: -1,
-      numberOfCreative: -1,
-      status: -1,
-      remarks: -1,
-      platforms: -1,
-      sizes: -1,
-    };
+    const cells = row.map(c => (c ?? '').toString().toLowerCase().trim());
+    const nonEmptyCells = cells.filter(c => c.length > 0);
+    if (nonEmptyCells.length < 2) continue;
+
+    let tempSno = [];
+    let tempCreative = -1;
+    let tempQty = -1;
+    let tempStatus = -1;
+    let tempRemarks = -1;
+    let tempPlatforms = -1;
+    let tempSizes = -1;
 
     row.forEach((cell, cIdx) => {
       if (cell === undefined || cell === null) return;
       const txt = cell.toString().toLowerCase().trim();
       if (!txt) return;
 
-      if (txt === 's.no' || txt === 'sno' || txt === 's. no' || txt === 'sr.no' || txt === 'sr no' || txt === 'sl no' || txt === 'sl. no' || txt === 'sr. no.' || txt === 's.no.' || txt === '#') {
-        tempColMap.sno = cIdx;
-        hasSno = true;
-      } else if (txt.includes('number of creative') || txt.includes('no. of creative') || txt.includes('no of creative') || txt.includes('number of creatives') || txt === 'quantity' || txt === 'qty') {
-        tempColMap.numberOfCreative = cIdx;
-      } else if (txt === 'launch creative' || txt === 'creative' || txt === 'deliverable' || txt === 'deliverables' || txt === 'scope of work' || txt === 'particulars' || txt === 'scope' || txt === 'item' || txt === 'task') {
-        tempColMap.launchCreative = cIdx;
-        hasCreative = true;
-      } else if (txt.includes('status') || txt.includes('status as of now')) {
-        tempColMap.status = cIdx;
+      if (txt === 's.no' || txt === 'sno' || txt === 's. no' || txt === 'sr.no' || txt === 'sr no' || txt === 'sl no' || txt === 'sl. no' || txt === 'sr. no.' || txt === 's.no.' || txt === '#' || txt === 'no' || txt === 'no.') {
+        tempSno.push(cIdx);
+      } else if (txt.includes('quantity') || txt.includes('qty') || txt.includes('frequency') || txt.includes('number of') || txt.includes('no. of') || txt.includes('no of') || txt.includes('count') || txt.includes('volume')) {
+        if (tempQty === -1) tempQty = cIdx;
+      } else if (txt.includes('creative') || txt.includes('deliverable') || txt.includes('scope') || txt.includes('task') || txt.includes('particular') || txt.includes('item') || txt.includes('activity') || txt.includes('activities') || txt.includes('teaser') || txt.includes('launch') || txt.includes('post') || txt.includes('asset') || txt.includes('work')) {
+        if (tempCreative === -1) tempCreative = cIdx;
+      } else if (txt.includes('status')) {
+        if (tempStatus === -1) tempStatus = cIdx;
       } else if (txt.includes('remark') || txt.includes('notes') || txt.includes('comment')) {
-        tempColMap.remarks = cIdx;
+        if (tempRemarks === -1) tempRemarks = cIdx;
       } else if (txt.includes('platform') || txt.includes('medium')) {
-        tempColMap.platforms = cIdx;
+        if (tempPlatforms === -1) tempPlatforms = cIdx;
       } else if (txt.includes('size') || txt.includes('ratio') || txt.includes('pixel') || txt.includes('dimension')) {
-        tempColMap.sizes = cIdx;
+        if (tempSizes === -1) tempSizes = cIdx;
       }
     });
 
-    if (hasSno || (hasCreative && (tempColMap.numberOfCreative !== -1 || tempColMap.remarks !== -1))) {
+    if ((tempSno.length > 0 && (tempCreative !== -1 || tempQty !== -1 || nonEmptyCells.length >= 2)) || (tempCreative !== -1 && tempQty !== -1)) {
       headerRowIdx = r;
-      colMap = tempColMap;
+      rawColMap = {
+        sno: tempSno,
+        launchCreative: tempCreative,
+        numberOfCreative: tempQty,
+        status: tempStatus,
+        remarks: tempRemarks,
+        platforms: tempPlatforms,
+        sizes: tempSizes,
+      };
       break;
     }
   }
 
-  // If launchCreative column was not explicitly named, pick column after sno
-  if (colMap.launchCreative === -1 && colMap.sno !== -1) {
-    colMap.launchCreative = colMap.sno + 1;
+  // Fallback: first row with at least 2 non-numeric text columns
+  if (headerRowIdx === -1) {
+    for (let r = 0; r < Math.min(10, rows.length); r++) {
+      const row = rows[r];
+      if (!Array.isArray(row)) continue;
+      const nonEmpty = row.map(c => (c ?? '').toString().trim()).filter(c => c.length > 0);
+      if (nonEmpty.length >= 2 && isNaN(nonEmpty[0]) && isNaN(nonEmpty[1])) {
+        headerRowIdx = r;
+        break;
+      }
+    }
   }
-  if (colMap.numberOfCreative === -1 && colMap.launchCreative !== -1) {
-    colMap.numberOfCreative = colMap.launchCreative + 1;
+
+  const headerRow = headerRowIdx !== -1 ? (rows[headerRowIdx] || []) : (rows[0] || []);
+
+  // Determine actual maximum non-empty column index across the sheet
+  let maxColIdx = 0;
+  headerRow.forEach((cell, cIdx) => {
+    if (cell !== undefined && cell !== null && cell.toString().trim().length > 0) {
+      if (cIdx > maxColIdx) maxColIdx = cIdx;
+    }
+  });
+  for (let r = 0; r < Math.min(30, rows.length); r++) {
+    const row = rows[r];
+    if (Array.isArray(row)) {
+      row.forEach((cell, cIdx) => {
+        if (cell !== undefined && cell !== null && cell.toString().trim().length > 0) {
+          if (cIdx > maxColIdx) maxColIdx = cIdx;
+        }
+      });
+    }
   }
+  const totalCols = Math.max(3, maxColIdx + 1);
+
+  // Check if there are duplicate S.No columns (e.g. col 0 and col 1 both S.No)
+  let duplicateSnoCol = -1;
+  if (rawColMap.sno.length >= 2) {
+    duplicateSnoCol = rawColMap.sno[1];
+  } else if (rawColMap.sno.length === 1 && rawColMap.launchCreative > 1) {
+    const h0 = (headerRow[0] || '').toString().toLowerCase().trim();
+    const h1 = (headerRow[1] || '').toString().toLowerCase().trim();
+    if (h1 === h0 || h1 === 's.no' || h1 === 'sno' || h1 === 'sr.no' || !h1) {
+      duplicateSnoCol = 1;
+    }
+  }
+
+  const snoColIdx = rawColMap.sno[0] !== undefined ? rawColMap.sno[0] : 0;
+  const creativeColIdx = rawColMap.launchCreative !== -1 ? rawColMap.launchCreative : (duplicateSnoCol === 1 ? 2 : 1);
+  const qtyColIdx = rawColMap.numberOfCreative !== -1 ? rawColMap.numberOfCreative : (creativeColIdx + 1);
+
+  // Extract clean column indices (excluding duplicate S.No)
+  const cleanColIndices = [];
+  for (let c = 0; c < totalCols; c++) {
+    if (c === duplicateSnoCol) continue;
+    cleanColIndices.push(c);
+  }
+
+  const cleanHeaders = cleanColIndices.map((c) => {
+    const val = (headerRow[c] !== undefined && headerRow[c] !== null) ? headerRow[c].toString().trim() : '';
+    if (val) return val;
+    if (c === snoColIdx) return 'S.No';
+    if (c === creativeColIdx) return 'Deliverable / Scope of Work';
+    if (c === qtyColIdx) return 'Quantity / Frequency';
+    return '';
+  });
+
+  const firstThreeHeaders = [
+    headerRow[snoColIdx]?.toString().trim() || 'S.No',
+    headerRow[creativeColIdx]?.toString().trim() || 'Deliverable / Scope of Work',
+    headerRow[qtyColIdx]?.toString().trim() || 'Quantity / Frequency'
+  ];
 
   const items = [];
   let currentSection = '';
-  const startRow = headerRowIdx !== -1 ? headerRowIdx + 1 : 0;
+  const startRow = headerRowIdx !== -1 ? headerRowIdx + 1 : 1;
 
   for (let i = startRow; i < rows.length; i++) {
     const row = rows[i] || [];
@@ -577,11 +652,18 @@ export function parseSOWRows(rows, clientName) {
 
     if (nonEmpties.length === 0) continue;
 
+    // Check if repeat header
     const isRepeatHeader = nonEmpties.some(x => {
       const v = x.val.toLowerCase();
-      return v === 's.no' || v === 'sno' || v === 'launch creative' || v === 'number of creative';
+      return v === 's.no' || v === 'sno' || v === 'launch creative' || v === 'scope of work' || v === 'number of creative';
     });
     if (isRepeatHeader) continue;
+
+    const rawCells = [];
+    for (let c = 0; c < totalCols; c++) {
+      rawCells.push((row[c] !== undefined && row[c] !== null) ? row[c].toString().trim() : '');
+    }
+    const cleanCells = cleanColIndices.map(c => rawCells[c] || '');
 
     // Check if section header banner
     if (nonEmpties.length === 1 || (nonEmpties.length <= 2 && isNaN(nonEmpties[0].val) && (!nonEmpties[1] || isNaN(nonEmpties[1].val)))) {
@@ -591,8 +673,8 @@ export function parseSOWRows(rows, clientName) {
           !lowerFirst.includes('s.no') && 
           !lowerFirst.includes('total') && 
           !lowerFirst.includes('remarks') &&
-          (colMap.sno === -1 || !row[colMap.sno] || isNaN(row[colMap.sno])) &&
-          (colMap.numberOfCreative === -1 || !row[colMap.numberOfCreative])) {
+          (!row[snoColIdx] || isNaN(row[snoColIdx])) &&
+          (!row[creativeColIdx] || isNaN(row[creativeColIdx]))) {
         currentSection = firstText;
         items.push({
           id: `sec-${i}`,
@@ -603,54 +685,26 @@ export function parseSOWRows(rows, clientName) {
           numberOfCreative: '',
           isMonthly: false,
           remarks: '',
+          rawCells,
+          cleanCells,
         });
         continue;
       }
     }
 
-    let snoVal = '';
-    let launchCreativeVal = '';
-    let numCreativeVal = '';
-    let remarksVal = '';
-    let statusVal = '';
-    let platformsVal = '';
-    let sizesVal = '';
+    let snoVal = (row[snoColIdx] !== undefined && row[snoColIdx] !== null) ? row[snoColIdx].toString().trim() : '';
+    let launchCreativeVal = (row[creativeColIdx] !== undefined && row[creativeColIdx] !== null) ? row[creativeColIdx].toString().trim() : '';
+    let numCreativeVal = (row[qtyColIdx] !== undefined && row[qtyColIdx] !== null) ? row[qtyColIdx].toString().trim() : '';
+    let remarksVal = (rawColMap.remarks !== -1 && row[rawColMap.remarks] !== undefined && row[rawColMap.remarks] !== null) ? row[rawColMap.remarks].toString().trim() : '';
+    let statusVal = (rawColMap.status !== -1 && row[rawColMap.status] !== undefined && row[rawColMap.status] !== null) ? row[rawColMap.status].toString().trim() : '';
+    let platformsVal = (rawColMap.platforms !== -1 && row[rawColMap.platforms] !== undefined && row[rawColMap.platforms] !== null) ? row[rawColMap.platforms].toString().trim() : '';
+    let sizesVal = (rawColMap.sizes !== -1 && row[rawColMap.sizes] !== undefined && row[rawColMap.sizes] !== null) ? row[rawColMap.sizes].toString().trim() : '';
 
-    if (colMap.sno !== -1 && row[colMap.sno] !== undefined && row[colMap.sno] !== null) {
-      snoVal = row[colMap.sno].toString().trim();
-    }
-    if (colMap.launchCreative !== -1 && row[colMap.launchCreative] !== undefined && row[colMap.launchCreative] !== null) {
-      launchCreativeVal = row[colMap.launchCreative].toString().trim();
-    }
-    if (colMap.numberOfCreative !== -1 && row[colMap.numberOfCreative] !== undefined && row[colMap.numberOfCreative] !== null) {
-      numCreativeVal = row[colMap.numberOfCreative].toString().trim();
-    }
-    if (colMap.remarks !== -1 && row[colMap.remarks] !== undefined && row[colMap.remarks] !== null) {
-      remarksVal = row[colMap.remarks].toString().trim();
-    }
-    if (colMap.status !== -1 && row[colMap.status] !== undefined && row[colMap.status] !== null) {
-      statusVal = row[colMap.status].toString().trim();
-    }
-    if (colMap.platforms !== -1 && row[colMap.platforms] !== undefined && row[colMap.platforms] !== null) {
-      platformsVal = row[colMap.platforms].toString().trim();
-    }
-    if (colMap.sizes !== -1 && row[colMap.sizes] !== undefined && row[colMap.sizes] !== null) {
-      sizesVal = row[colMap.sizes].toString().trim();
-    }
-
-    // Fallback if header wasn't perfectly mapped
     if (!launchCreativeVal && nonEmpties.length > 0) {
-      if (!isNaN(nonEmpties[0].val)) {
-        snoVal = snoVal || nonEmpties[0].val;
-        launchCreativeVal = nonEmpties[1]?.val || '';
-        numCreativeVal = numCreativeVal || nonEmpties[2]?.val || '';
-      } else {
-        launchCreativeVal = nonEmpties[0].val;
-        numCreativeVal = numCreativeVal || nonEmpties[1]?.val || '';
-      }
+      launchCreativeVal = nonEmpties.find(x => isNaN(x.val))?.val || nonEmpties[0].val;
     }
 
-    if (!launchCreativeVal || launchCreativeVal.length < 2) continue;
+    if (!launchCreativeVal) continue;
 
     const lowerItem = launchCreativeVal.toLowerCase();
     if (lowerItem === 'creative' || lowerItem === 'deliverable' || lowerItem === 'scope of work' || 
@@ -659,7 +713,7 @@ export function parseSOWRows(rows, clientName) {
       continue;
     }
 
-    // Determine whether this item is Monthly recurring ("months if it is supposed to be months")
+    // Monthly recurring detection
     const combinedLower = `${launchCreativeVal} ${numCreativeVal} ${currentSection} ${remarksVal}`.toLowerCase();
     const isExplicitMonthly = numCreativeVal.toLowerCase().includes('/month') ||
                               numCreativeVal.toLowerCase().includes('per month') ||
@@ -693,13 +747,18 @@ export function parseSOWRows(rows, clientName) {
       platforms: platformsVal,
       sizes: sizesVal,
       status: statusVal,
+      rawCells,
+      cleanCells,
     });
   }
 
   return {
-    headers: ['S.No', 'Launch Creative', 'Number of Creative', 'Status as of now'],
+    headers: cleanHeaders,
+    allHeaders: cleanHeaders,
+    firstThreeHeaders,
     items,
   };
 }
 
+export const parseScopeOfWorkSheet = parseSOWRows;
 

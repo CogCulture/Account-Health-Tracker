@@ -916,7 +916,7 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
             }
 
             const countsMap = monthJobs.reduce((acc, job) => {
-              const type = (job.jobType || 'Others').trim() || 'Others';
+              const type = (job.jobType || job.deliverableType || 'Others').trim() || 'Others';
               acc[type] = (acc[type] || 0) + 1;
               return acc;
             }, {});

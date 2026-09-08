@@ -16,7 +16,11 @@ import {
   Link2,
   Trash2,
   Edit3,
-  CheckCircle2
+  CheckCircle2,
+  Maximize2,
+  Minimize2,
+  UserCheck,
+  XCircle
 } from 'lucide-react';
 import { fetchSheetData, fetchSheetTabs } from '../utils/sheetsApi';
 import { parseSOWRows } from '../utils/sheetsParser';
@@ -42,34 +46,107 @@ function normalizeText(txt) {
     .trim();
 }
 
+const STATUS_CYCLE = ['Monthly', 'Done', 'CTR', 'ATR', 'Not Done'];
+
 /**
- * Checks if a SOW item matches any deliverable closed/done this month.
+ * Determines current status for a SOW item:
+ * Done | Not Done | CTR | ATR | Monthly
  */
-function isSowItemDoneThisMonth(sowItem, completedJobs = []) {
-  if (!sowItem) return false;
-  if (sowItem.status && (sowItem.status.toLowerCase().includes('done') || sowItem.status.toLowerCase().includes('closed') || sowItem.status.toLowerCase().includes('completed'))) {
-    return true;
+function getSowItemStatus(item, allMonthDeliverables = [], manualStatusOverrides = {}) {
+  if (!item) return 'Not Done';
+  if (manualStatusOverrides[item.id]) {
+    return manualStatusOverrides[item.id];
   }
-  const normSow = normalizeText(sowItem.launchCreative || sowItem.sowItem);
-  if (!normSow) return false;
 
-  const sowWords = normSow.split(' ').filter(w => w.length > 2);
+  // 1. Check if the sheet row itself has an explicit status cell
+  if (item.status) {
+    const s = item.status.toString().toLowerCase().trim();
+    if (s === 'done' || s === 'closed' || s === 'completed') return 'Done';
+    if (s === 'ctr' || s.includes('ctr') || s.includes('client')) return 'CTR';
+    if (s === 'atr' || s.includes('atr') || s.includes('agency')) return 'ATR';
+    if (s === 'monthly' || s.includes('month')) return 'Monthly';
+    if (s === 'not done' || s.includes('pending') || s.includes('open') || s === 'not-done') return 'Not Done';
+  }
 
-  return completedJobs.some(job => {
-    const jobName = normalizeText(job.deliverable || job.jobId || '');
-    if (!jobName) return false;
+  // 2. Keyword match against actual jobs done this month
+  const normSow = normalizeText(item.launchCreative || item.rawCells?.[1] || item.sowItem || '');
+  if (normSow) {
+    const sowWords = normSow.split(' ').filter(w => w.length > 2);
+    const matchedJob = allMonthDeliverables.find(job => {
+      const jobName = normalizeText(job.deliverable || job.jobId || '');
+      if (!jobName) return false;
+      if (jobName.includes(normSow) || normSow.includes(jobName)) return true;
+      if (sowWords.length > 0) {
+        const matchCount = sowWords.filter(word => jobName.includes(word)).length;
+        if (matchCount >= Math.min(2, sowWords.length)) return true;
+      }
+      return false;
+    });
 
-    // Exact or substring match
-    if (jobName.includes(normSow) || normSow.includes(jobName)) return true;
-
-    // Significant token overlap match
-    if (sowWords.length > 0) {
-      const matchCount = sowWords.filter(word => jobName.includes(word)).length;
-      if (matchCount >= Math.min(2, sowWords.length)) return true;
+    if (matchedJob) {
+      const jobStatus = (matchedJob.status || '').toString().toLowerCase().trim();
+      if (jobStatus === 'closed' || jobStatus === 'completed' || jobStatus === 'done') {
+        return 'Done';
+      }
+      if (jobStatus.includes('ctr') || jobStatus.includes('client')) {
+        return 'CTR';
+      }
+      if (jobStatus.includes('atr') || jobStatus.includes('agency') || jobStatus.includes('in progress') || jobStatus.includes('in-progress') || jobStatus.includes('ongoing')) {
+        return 'ATR';
+      }
     }
+  }
 
-    return false;
-  });
+  // 3. Check if recurring monthly item
+  if (item.isMonthly) {
+    return 'Monthly';
+  }
+
+  return 'Not Done';
+}
+
+/**
+ * Renders stylized status badge with icon
+ */
+function renderStatusBadge(statusVal) {
+  switch (statusVal) {
+    case 'Monthly':
+      return (
+        <span className="sow-badge sow-badge-monthly" title="Monthly Retainer (Click to cycle: Monthly → Done → CTR → ATR → Not Done)">
+          <Calendar size={11} />
+          <span>Monthly</span>
+        </span>
+      );
+    case 'Done':
+      return (
+        <span className="sow-badge sow-badge-done" title="Done / Completed (Click to cycle: Monthly → Done → CTR → ATR → Not Done)">
+          <Check size={11} />
+          <span>Done</span>
+        </span>
+      );
+    case 'CTR':
+      return (
+        <span className="sow-badge sow-badge-ctr" title="CTR - Client Turnaround / Awaiting Client (Click to cycle)">
+          <UserCheck size={11} />
+          <span>CTR</span>
+        </span>
+      );
+    case 'ATR':
+      return (
+        <span className="sow-badge sow-badge-atr" title="ATR - Agency Turnaround / In Progress (Click to cycle)">
+          <RefreshCw size={11} />
+          <span>ATR</span>
+        </span>
+      );
+    case 'Not Done':
+    default:
+      return (
+        <span className="sow-badge sow-badge-not-done" title="Not Done / Pending (Click to cycle: Monthly → Done → CTR → ATR → Not Done)">
+          <XCircle size={11} />
+          <span>Not Done</span>
+        </span>
+      );
+  }
 }
 
 export default function ScopeOfWorkModal({
@@ -94,11 +171,11 @@ export default function ScopeOfWorkModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [deliverableFilter, setDeliverableFilter] = useState('all'); // 'all' | 'done' | 'pending'
   const [urlInput, setUrlInput] = useState('');
   const [showUrlInput, setShowUrlInput] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false); // Controls 3-column vs full sheet view
 
-  // User manual status override toggle { [sowItemId]: 'Monthly' | 'Done' | 'Not Done' }
+  // User manual status override toggle { [sowItemId]: 'Monthly' | 'Done' | 'CTR' | 'ATR' | 'Not Done' }
   const [manualStatusOverrides, setManualStatusOverrides] = useState({});
 
   useEffect(() => {
@@ -106,35 +183,46 @@ export default function ScopeOfWorkModal({
     setSowId(idToSet);
   }, [propSowId, activePair]);
 
-  // Extract completed / closed jobs vs in progress for the selected month
-  const { allMonthDeliverables, doneDeliverables, pendingDeliverables, categoryCounts } = useMemo(() => {
+  // Extract monthly category breakdown & jobs for the selected month
+  const { allMonthDeliverables, doneDeliverables, categoryStats } = useMemo(() => {
     const list = Array.isArray(jobRows) ? jobRows : [];
     const done = list.filter(j => {
       const s = (j.status || '').toString().toLowerCase().trim();
       return s === 'closed' || s === 'completed' || s === 'done';
     });
-    const pending = list.filter(j => {
-      const s = (j.status || '').toString().toLowerCase().trim();
-      return s !== 'closed' && s !== 'completed' && s !== 'done';
+
+    const total = list.length || 1;
+    const statsMap = {};
+
+    list.forEach(job => {
+      const type = (job.jobType || job.deliverableType || 'Others').trim() || 'Others';
+      if (!statsMap[type]) {
+        statsMap[type] = { type, count: 0, doneCount: 0, pendingCount: 0 };
+      }
+      statsMap[type].count += 1;
+      const s = (job.status || '').toString().toLowerCase().trim();
+      if (s === 'closed' || s === 'completed' || s === 'done') {
+        statsMap[type].doneCount += 1;
+      } else {
+        statsMap[type].pendingCount += 1;
+      }
     });
 
-    const countsMap = list.reduce((acc, job) => {
-      const type = (job.jobType || job.deliverableType || 'Deliverables').trim() || 'Deliverables';
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {});
-
-    const sortedCats = Object.entries(countsMap).sort((a, b) => {
-      if (a[0].toLowerCase() === 'others' || a[0].toLowerCase() === 'deliverables') return 1;
-      if (b[0].toLowerCase() === 'others' || b[0].toLowerCase() === 'deliverables') return -1;
-      return b[1] - a[1];
-    });
+    const sortedCats = Object.values(statsMap)
+      .map(item => ({
+        ...item,
+        pct: Math.round((item.count / total) * 100)
+      }))
+      .sort((a, b) => {
+        if (a.type.toLowerCase() === 'others') return 1;
+        if (b.type.toLowerCase() === 'others') return -1;
+        return b.count - a.count;
+      });
 
     return {
       allMonthDeliverables: list,
       doneDeliverables: done,
-      pendingDeliverables: pending,
-      categoryCounts: sortedCats
+      categoryStats: sortedCats
     };
   }, [jobRows]);
 
@@ -276,53 +364,50 @@ export default function ScopeOfWorkModal({
   };
 
   const toggleItemStatus = (itemId, currentVal) => {
-    const nextVal = currentVal === 'Monthly' ? 'Done' : currentVal === 'Done' ? 'Not Done' : 'Monthly';
+    const idx = STATUS_CYCLE.indexOf(currentVal);
+    const nextVal = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length] || 'Monthly';
     setManualStatusOverrides(prev => ({
       ...prev,
       [itemId]: nextVal
     }));
   };
 
+  // Filter SOW items based on search across all raw cells & fields
+  const filteredSowItems = useMemo(() => {
+    return (sowData?.items || []).filter(item => {
+      if (item.isSectionHeader) {
+        return !searchTerm;
+      }
+      if (!searchTerm) return true;
+      const term = searchTerm.toLowerCase();
+
+      if (Array.isArray(item.rawCells) && item.rawCells.some(c => (c || '').toString().toLowerCase().includes(term))) {
+        return true;
+      }
+
+      return (
+        (item.launchCreative && item.launchCreative.toLowerCase().includes(term)) ||
+        (item.numberOfCreative && item.numberOfCreative.toLowerCase().includes(term)) ||
+        (item.remarks && item.remarks.toLowerCase().includes(term)) ||
+        (item.platforms && item.platforms.toLowerCase().includes(term)) ||
+        (item.sizes && item.sizes.toLowerCase().includes(term))
+      );
+    });
+  }, [sowData, searchTerm]);
+
+  // Filter Category Breakdown based on search
+  const filteredCategories = useMemo(() => {
+    if (!searchTerm) return categoryStats;
+    const term = searchTerm.toLowerCase();
+    return categoryStats.filter(cat => cat.type.toLowerCase().includes(term));
+  }, [categoryStats, searchTerm]);
+
   if (!isOpen) return null;
-
-  // Filter SOW items based on search
-  const filteredSowItems = (sowData?.items || []).filter(item => {
-    if (item.isSectionHeader) {
-      return !searchTerm;
-    }
-
-    const matchesSearch = !searchTerm || 
-      (item.launchCreative && item.launchCreative.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (item.numberOfCreative && item.numberOfCreative.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (item.remarks && item.remarks.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (item.platforms && item.platforms.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (item.sizes && item.sizes.toLowerCase().includes(searchTerm.toLowerCase()));
-
-    return matchesSearch;
-  });
-
-  // Filter Deliverables based on search and status filter
-  const filteredDeliverables = allMonthDeliverables.filter(job => {
-    const matchesSearch = !searchTerm ||
-      (job.deliverable && job.deliverable.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (job.jobType && job.jobType.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (job.jobId && job.jobId.toLowerCase().includes(searchTerm.toLowerCase()));
-
-    if (!matchesSearch) return false;
-
-    const s = (job.status || '').toString().toLowerCase().trim();
-    const isDone = s === 'closed' || s === 'completed' || s === 'done';
-
-    if (deliverableFilter === 'done') return isDone;
-    if (deliverableFilter === 'pending') return !isDone;
-
-    return true;
-  });
 
   return (
     <div className="sow-modal-backdrop" onClick={onClose}>
       <div 
-        className="sow-modal-container"
+        className={`sow-modal-container ${isExpanded ? 'expanded' : ''}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* ── Header ────────────────────────────────────────────────────────── */}
@@ -439,7 +524,7 @@ export default function ScopeOfWorkModal({
                 <span>Re-ingest Scope of Work Google Sheet via URL:</span>
               </span>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                Extracts [S.No], Launch Creative, Number of Creative, and Monthly/Done Status
+                Syncs sheet headers, columns, and tracks Done / Not Done / CTR / ATR / Monthly status
               </span>
             </div>
 
@@ -480,7 +565,7 @@ export default function ScopeOfWorkModal({
             <Search size={15} style={{ color: 'var(--text-muted)' }} />
             <input 
               type="text"
-              placeholder="Search launch creatives or deliverables..."
+              placeholder="Search deliverables, tasks, or sheet columns..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="sow-search-input"
@@ -494,24 +579,6 @@ export default function ScopeOfWorkModal({
               </button>
             )}
           </div>
-
-          {/* Tab Selector if available */}
-          {availableTabs.length > 1 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', overflowX: 'auto', maxWidth: '380px' }}>
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginRight: '0.2rem' }}>Tab:</span>
-              {availableTabs.map(tab => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => handleTabChange(tab)}
-                  className={`sow-filter-pill ${selectedTab.toLowerCase() === tab.toLowerCase() ? 'active' : ''}`}
-                  style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem' }}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-          )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <button
@@ -527,13 +594,13 @@ export default function ScopeOfWorkModal({
           </div>
         </div>
 
-        {/* ── Main Split View ────────────────────────────────────────────────── */}
-        <div className="sow-modal-body">
+        {/* ── Main View (Split or Expanded) ────────────────────────────────────────────────── */}
+        <div className={`sow-modal-body ${isExpanded ? 'expanded' : ''}`}>
 
-          {/* ════════ LEFT SIDE: Scope of Work Table ════════ */}
+          {/* ════════ LEFT SIDE / FULL WIDTH: Scope of Work Table ════════ */}
           <div className="sow-panel left-panel">
             <div className="sow-panel-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden' }}>
                 <span className="sow-panel-title">SCOPE OF WORK (SOW)</span>
                 {sowData?.items && (
                   <span className="sow-count-badge">
@@ -541,11 +608,45 @@ export default function ScopeOfWorkModal({
                   </span>
                 )}
                 {sowData?.tabName && (
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                     (Tab: <strong>{sowData.tabName}</strong>)
                   </span>
                 )}
               </div>
+
+              {/* Expand / Collapse Button on the right side of Scope */}
+              <button
+                type="button"
+                onClick={() => setIsExpanded(prev => !prev)}
+                className="btn btn-secondary sow-expand-btn"
+                style={{
+                  fontSize: '0.74rem',
+                  padding: '0.28rem 0.65rem',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  background: isExpanded ? 'rgba(59, 130, 246, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                  color: isExpanded ? '#3B82F6' : 'var(--text-primary)',
+                  border: isExpanded ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid var(--card-border)',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  marginLeft: 'auto',
+                  flexShrink: 0
+                }}
+                title={isExpanded ? "Collapse to 3 columns split view" : "Expand Scope of Work to view full sheet with all columns"}
+              >
+                {isExpanded ? (
+                  <>
+                    <Minimize2 size={13} />
+                    <span>Collapse</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 size={13} />
+                    <span>Expand Scope (Full Sheet)</span>
+                  </>
+                )}
+              </button>
             </div>
 
             {/* SOW Table Container with custom scrollbar */}
@@ -604,15 +705,84 @@ export default function ScopeOfWorkModal({
                     {searchTerm ? 'No scope items matching your search.' : 'No scope items found in this sheet tab.'}
                   </p>
                 </div>
-              ) : (
-                /* Requested Table Headers: S.No | Launch Creative | Number of Creative | Status as of now */
+              ) : isExpanded ? (
+                /* ── FULL SHEET VIEW (All columns from Google Sheet as-is + Status) ── */
                 <table className="sow-data-table">
                   <thead>
                     <tr>
-                      <th style={{ width: '10%', textAlign: 'center' }}>S.No</th>
-                      <th style={{ width: '45%' }}>Launch Creative</th>
-                      <th style={{ width: '25%' }}>Number of Creative</th>
-                      <th style={{ width: '20%' }}>Status as of now</th>
+                      {(sowData?.headers || []).map((hdr, hIdx) => (
+                        <th key={hIdx} style={{ textAlign: hIdx === 0 ? 'center' : 'left' }}>
+                          {hdr}
+                        </th>
+                      ))}
+                      <th style={{ width: '130px', textAlign: 'center' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredSowItems.map((item, idx) => {
+                      const colCount = (sowData?.headers || []).length;
+                      if (item.isSectionHeader) {
+                        return (
+                          <tr key={item.id || idx} style={{ background: 'rgba(59, 130, 246, 0.08)', borderTop: '1px solid rgba(59, 130, 246, 0.2)', borderBottom: '1px solid rgba(59, 130, 246, 0.2)' }}>
+                            <td colSpan={colCount + 1} style={{ padding: '0.6rem 1rem', fontWeight: 800, color: '#3B82F6', fontSize: '0.82rem', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                              {item.sectionTitle}
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      const statusVal = getSowItemStatus(item, allMonthDeliverables, manualStatusOverrides);
+
+                      return (
+                        <tr key={item.id || idx}>
+                          {(sowData?.headers || []).map((_, cIdx) => {
+                            const val = item.cleanCells?.[cIdx] !== undefined && item.cleanCells[cIdx] !== null && item.cleanCells[cIdx] !== '' 
+                              ? item.cleanCells[cIdx] 
+                              : (item.rawCells?.[cIdx] !== undefined && item.rawCells[cIdx] !== null && item.rawCells[cIdx] !== '' ? item.rawCells[cIdx] : '—');
+                            return (
+                              <td 
+                                key={cIdx} 
+                                style={{ 
+                                  textAlign: cIdx === 0 ? 'center' : 'left', 
+                                  fontWeight: cIdx === 0 ? 700 : 400, 
+                                  color: cIdx === 0 ? 'var(--text-muted)' : 'var(--text-primary)',
+                                  whiteSpace: cIdx === 1 ? 'normal' : 'nowrap'
+                                }}
+                              >
+                                {val}
+                              </td>
+                            );
+                          })}
+                          <td style={{ textAlign: 'center' }}>
+                            <button
+                              type="button"
+                              onClick={() => toggleItemStatus(item.id, statusVal)}
+                              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'inline-flex' }}
+                              title="Click to cycle status: Monthly → Done → CTR → ATR → Not Done"
+                            >
+                              {renderStatusBadge(statusVal)}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                /* ── 3-COLUMN VIEW (Headers same as Google Sheet: Col 1, Col 2, Col 3 + Status) ── */
+                <table className="sow-data-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '12%', textAlign: 'center' }}>
+                        {sowData?.firstThreeHeaders?.[0] || 'S.No'}
+                      </th>
+                      <th style={{ width: '44%' }}>
+                        {sowData?.firstThreeHeaders?.[1] || 'Deliverable / Scope of Work'}
+                      </th>
+                      <th style={{ width: '22%', textAlign: 'center' }}>
+                        {sowData?.firstThreeHeaders?.[2] || 'Quantity / Frequency'}
+                      </th>
+                      <th style={{ width: '22%', textAlign: 'center' }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -627,73 +797,59 @@ export default function ScopeOfWorkModal({
                         );
                       }
 
-                      const isDone = isSowItemDoneThisMonth(item, doneDeliverables);
-                      const statusVal = manualStatusOverrides[item.id] || (item.isMonthly ? 'Monthly' : (isDone ? 'Done' : 'Not Done'));
+                      const statusVal = getSowItemStatus(item, allMonthDeliverables, manualStatusOverrides);
 
                       return (
                         <tr key={item.id || idx}>
                           {/* Col 1: S.No */}
                           <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                            {item.sno || idx + 1}
+                            {item.sno || item.cleanCells?.[0] || idx + 1}
                           </td>
 
-                          {/* Col 2: Launch Creative */}
+                          {/* Col 2: Deliverable / Creative Title */}
                           <td className="sow-item-title-cell">
                             <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem' }}>
-                              {item.launchCreative}
+                              {item.launchCreative || item.cleanCells?.[1] || '—'}
                             </div>
                             
                             {/* Extra details (Platforms, Sizes, Remarks) */}
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.2rem' }}>
-                              {item.platforms && (
-                                <span style={{ fontSize: '0.68rem', color: '#3B82F6', background: 'rgba(59, 130, 246, 0.1)', padding: '0.05rem 0.4rem', borderRadius: '4px' }}>
-                                  {item.platforms}
-                                </span>
-                              )}
-                              {item.sizes && (
-                                <span style={{ fontSize: '0.68rem', color: '#10B981', background: 'rgba(16, 185, 129, 0.1)', padding: '0.05rem 0.4rem', borderRadius: '4px' }}>
-                                  {item.sizes}
-                                </span>
-                              )}
-                              {item.remarks && (
-                                <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                  {item.remarks}
-                                </span>
-                              )}
-                            </div>
+                            {(item.platforms || item.sizes || item.remarks) && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.2rem' }}>
+                                {item.platforms && (
+                                  <span style={{ fontSize: '0.68rem', color: '#3B82F6', background: 'rgba(59, 130, 246, 0.1)', padding: '0.05rem 0.4rem', borderRadius: '4px' }}>
+                                    {item.platforms}
+                                  </span>
+                                )}
+                                {item.sizes && (
+                                  <span style={{ fontSize: '0.68rem', color: '#10B981', background: 'rgba(16, 185, 129, 0.1)', padding: '0.05rem 0.4rem', borderRadius: '4px' }}>
+                                    {item.sizes}
+                                  </span>
+                                )}
+                                {item.remarks && (
+                                  <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                    {item.remarks}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </td>
 
-                          {/* Col 3: Number of Creative */}
-                          <td>
+                          {/* Col 3: Quantity */}
+                          <td style={{ textAlign: 'center' }}>
                             <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 700 }}>
-                              {item.numberOfCreative || '—'}
+                              {item.numberOfCreative || item.cleanCells?.[2] || '—'}
                             </span>
                           </td>
 
-                          {/* Col 4: Status as of now (Click to toggle: Monthly / Done / Not Done) */}
-                          <td>
+                          {/* Col 4: Status (Done / Not Done / CTR / ATR / Monthly) */}
+                          <td style={{ textAlign: 'center' }}>
                             <button
                               type="button"
                               onClick={() => toggleItemStatus(item.id, statusVal)}
-                              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
-                              title="Click to toggle status (Monthly / Done / Not Done)"
+                              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'inline-flex' }}
+                              title="Click to cycle status: Monthly → Done → CTR → ATR → Not Done"
                             >
-                              {statusVal === 'Monthly' ? (
-                                <span className="sow-badge sow-badge-monthly">
-                                  <Calendar size={11} />
-                                  <span>Monthly</span>
-                                </span>
-                              ) : statusVal === 'Done' ? (
-                                <span className="sow-badge sow-badge-done">
-                                  <Check size={11} />
-                                  <span>Done</span>
-                                </span>
-                              ) : (
-                                <span className="sow-badge sow-badge-not-done">
-                                  <Clock size={11} />
-                                  <span>Not Done</span>
-                                </span>
-                              )}
+                              {renderStatusBadge(statusVal)}
                             </button>
                           </td>
                         </tr>
@@ -705,181 +861,98 @@ export default function ScopeOfWorkModal({
             </div>
           </div>
 
-          {/* ════════ RIGHT SIDE: Deliverables This Month (Original Data & Breakdown) ════════ */}
-          <div className="sow-panel right-panel">
-            <div className="sow-panel-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span className="sow-panel-title">DELIVERABLES THIS MONTH</span>
-                <span className="sow-count-badge" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10B981' }}>
-                  {doneDeliverables.length} Closed / Done
-                </span>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                  ({allMonthDeliverables.length} Total)
-                </span>
+          {/* ════════ RIGHT SIDE: Deliverables This Month (Category Breakdown Table) ════════ */}
+          {!isExpanded && (
+            <div className="sow-panel right-panel">
+              <div className="sow-panel-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="sow-panel-title">DELIVERABLES THIS MONTH</span>
+                  <span className="sow-count-badge" style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' }}>
+                    {allMonthDeliverables.length} Total
+                  </span>
+                  {doneDeliverables.length > 0 && (
+                    <span className="sow-count-badge" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10B981' }}>
+                      {doneDeliverables.length} Closed / Done
+                    </span>
+                  )}
+                </div>
               </div>
 
-              {/* Deliverable Status Filter */}
-              <div style={{ display: 'flex', gap: '0.3rem' }}>
-                <button 
-                  className={`sow-filter-pill ${deliverableFilter === 'all' ? 'active' : ''}`}
-                  onClick={() => setDeliverableFilter('all')}
-                >
-                  All ({allMonthDeliverables.length})
-                </button>
-                <button 
-                  className={`sow-filter-pill ${deliverableFilter === 'done' ? 'active' : ''}`}
-                  onClick={() => setDeliverableFilter('done')}
-                >
-                  Done ({doneDeliverables.length})
-                </button>
-                <button 
-                  className={`sow-filter-pill ${deliverableFilter === 'pending' ? 'active' : ''}`}
-                  onClick={() => setDeliverableFilter('pending')}
-                >
-                  Pending ({pendingDeliverables.length})
-                </button>
-              </div>
-            </div>
-
-            {/* Scrollable Container with Category Breakdown & Full Deliverables List */}
-            <div className="sow-scroll-container" style={{ padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              
-              {/* 1. Category Breakdown Cards with Progress Bars */}
-              {categoryCounts && categoryCounts.length > 0 && (
-                <div>
-                  <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.6rem' }}>
-                    Category Breakdown
-                  </div>
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-                    gap: '0.75rem'
-                  }}>
-                    {categoryCounts.map(([type, count]) => {
-                      const total = allMonthDeliverables.length || 1;
-                      const pct = Math.round((count / total) * 100);
-                      return (
-                        <div key={type} style={{
-                          background: 'rgba(255, 255, 255, 0.03)',
-                          border: '1px solid var(--card-border)',
-                          borderRadius: '10px',
-                          padding: '0.75rem 0.85rem',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '0.3rem'
-                        }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
-                              {type}
-                            </span>
-                            <span style={{
-                              fontSize: '0.82rem', fontWeight: 800,
-                              color: '#3B82F6', background: 'rgba(59, 130, 246, 0.12)',
-                              padding: '0.1rem 0.45rem', borderRadius: '5px'
-                            }}>
-                              {count}
-                            </span>
-                          </div>
-                          <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden', marginTop: '0.15rem' }}>
-                            <div style={{ width: `${pct}%`, height: '100%', background: '#3B82F6', borderRadius: '2px' }} />
-                          </div>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                            {pct}% of month deliverables
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* 2. Deliverables Table */}
-              <div>
-                <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.6rem' }}>
-                  Monthly Deliverables List ({filteredDeliverables.length})
-                </div>
-
-                {filteredDeliverables.length === 0 ? (
-                  <div className="sow-empty-state" style={{ padding: '2rem 1rem' }}>
-                    <Clock size={28} style={{ color: 'var(--text-muted)', marginBottom: '0.5rem' }} />
+              {/* Scrollable Container with Category Breakdown Table */}
+              <div className="sow-scroll-container">
+                {filteredCategories.length === 0 ? (
+                  <div className="sow-empty-state">
+                    <Layers size={28} style={{ color: 'var(--text-muted)', marginBottom: '0.5rem' }} />
                     <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
                       {searchTerm 
-                        ? 'No deliverables match your search query.'
-                        : `No ${deliverableFilter !== 'all' ? deliverableFilter : ''} deliverables recorded for ${monthName} ${year}.`}
+                        ? 'No deliverable categories match your search query.' 
+                        : `No deliverables recorded for ${monthName} ${year}.`}
                     </p>
                   </div>
                 ) : (
-                  <table className="sow-data-table" style={{ background: 'var(--bg-secondary)', borderRadius: '10px', overflow: 'hidden', border: '1px solid var(--card-border)' }}>
+                  <table className="sow-data-table">
                     <thead>
                       <tr>
-                        <th style={{ width: '50%' }}>Deliverable / Job Name</th>
-                        <th style={{ width: '28%' }}>Status</th>
-                        <th style={{ width: '22%' }}>Delivery</th>
+                        <th style={{ width: '12%', textAlign: 'center' }}>S.No</th>
+                        <th style={{ width: '44%' }}>Category / Deliverable Type</th>
+                        <th style={{ width: '22%', textAlign: 'center' }}>Total Count</th>
+                        <th style={{ width: '22%', textAlign: 'center' }}>% Share</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredDeliverables.map((job, idx) => {
-                        const s = (job.status || '').toString().toLowerCase().trim();
-                        const isClosed = s === 'closed' || s === 'completed' || s === 'done';
-                        const isInProg = s === 'in progress' || s === 'in-progress' || s === 'ongoing';
-                        const isCTR = s.includes('ctr') || s.includes('client');
-                        const isATR = s.includes('atr') || s.includes('agency');
+                      {filteredCategories.map((cat, idx) => (
+                        <tr key={cat.type}>
+                          {/* Col 1: S.No */}
+                          <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                            {idx + 1}
+                          </td>
 
-                        let statusBadgeClass = 'sow-job-status-default';
-                        if (isClosed) statusBadgeClass = 'sow-job-status-closed';
-                        else if (isInProg) statusBadgeClass = 'sow-job-status-inprogress';
-                        else if (isCTR) statusBadgeClass = 'sow-job-status-ctr';
-                        else if (isATR) statusBadgeClass = 'sow-job-status-atr';
-
-                        return (
-                          <tr key={job.jobId || idx}>
-                            {/* Deliverable Name */}
-                            <td className="sow-item-title-cell">
-                              <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem' }}>
-                                {job.deliverable || job.jobId || 'Unnamed Deliverable'}
+                          {/* Col 2: Category Name */}
+                          <td className="sow-item-title-cell">
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem' }}>
+                              {cat.type}
+                            </div>
+                            {cat.doneCount > 0 && (
+                              <div style={{ fontSize: '0.7rem', color: '#10B981', marginTop: '0.15rem' }}>
+                                {cat.doneCount} of {cat.count} completed
                               </div>
-                              {job.jobType && job.jobType.toLowerCase() !== 'others' && job.jobType.toLowerCase() !== 'deliverables' && (
-                                <div style={{ fontSize: '0.72rem', color: '#3B82F6', marginTop: '0.1rem' }}>
-                                  {job.jobType}
-                                </div>
-                              )}
-                            </td>
+                            )}
+                          </td>
 
-                            {/* Status */}
-                            <td>
-                              <span className={`sow-job-status ${statusBadgeClass}`}>
-                                {job.status || 'Active'}
+                          {/* Col 3: Count Badge */}
+                          <td style={{ textAlign: 'center' }}>
+                            <span style={{
+                              fontSize: '0.85rem',
+                              fontWeight: 800,
+                              color: '#3B82F6',
+                              background: 'rgba(59, 130, 246, 0.12)',
+                              padding: '0.2rem 0.65rem',
+                              borderRadius: '6px',
+                              display: 'inline-block'
+                            }}>
+                              {cat.count}
+                            </span>
+                          </td>
+
+                          {/* Col 4: % Share + Progress bar */}
+                          <td style={{ textAlign: 'center' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
+                              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                                {cat.pct}%
                               </span>
-                            </td>
-
-                            {/* Delivery Status */}
-                            <td>
-                              {isClosed ? (
-                                job.timelineStatus?.toLowerCase() === 'delayed' ? (
-                                  <span style={{ fontSize: '0.74rem', color: '#EF4444', fontWeight: 700 }}>
-                                    Delayed
-                                  </span>
-                                ) : (
-                                  <span style={{ fontSize: '0.74rem', color: '#10B981', fontWeight: 700 }}>
-                                    On-Time
-                                  </span>
-                                )
-                              ) : (
-                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                                  In Progress
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                              <div style={{ width: '56px', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
+                                <div style={{ width: `${cat.pct}%`, height: '100%', background: '#3B82F6', borderRadius: '2px' }} />
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 )}
               </div>
-
             </div>
-          </div>
+          )}
 
         </div>
       </div>
