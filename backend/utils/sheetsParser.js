@@ -596,42 +596,61 @@ export function parseSOWRows(rows, clientName) {
   }
   const totalCols = Math.max(3, maxColIdx + 1);
 
-  // Check if there are duplicate S.No columns (e.g. col 0 and col 1 both S.No)
-  let duplicateSnoCol = -1;
-  if (rawColMap.sno.length >= 2) {
-    duplicateSnoCol = rawColMap.sno[1];
-  } else if (rawColMap.sno.length === 1 && rawColMap.launchCreative > 1) {
-    const h0 = (headerRow[0] || '').toString().toLowerCase().trim();
-    const h1 = (headerRow[1] || '').toString().toLowerCase().trim();
-    if (h1 === h0 || h1 === 's.no' || h1 === 'sno' || h1 === 'sr.no' || !h1) {
-      duplicateSnoCol = 1;
-    }
+  // 1. Identify leading empty columns before the first meaningful header cell
+  let firstUsefulCol = 0;
+  while (firstUsefulCol < totalCols && (!headerRow[firstUsefulCol] || headerRow[firstUsefulCol].toString().trim() === '')) {
+    firstUsefulCol++;
+  }
+  if (firstUsefulCol >= totalCols) firstUsefulCol = 0;
+
+  // 2. Determine snoColIdx, creativeColIdx, qtyColIdx
+  let snoColIdx = -1;
+  if (rawColMap.sno.length > 0) {
+    snoColIdx = rawColMap.sno[0];
+  } else if (firstUsefulCol > 0 && rawColMap.launchCreative > firstUsefulCol) {
+    snoColIdx = firstUsefulCol;
+  } else if (firstUsefulCol === 0 && rawColMap.launchCreative > 0) {
+    snoColIdx = 0;
   }
 
-  const snoColIdx = rawColMap.sno[0] !== undefined ? rawColMap.sno[0] : 0;
-  const creativeColIdx = rawColMap.launchCreative !== -1 ? rawColMap.launchCreative : (duplicateSnoCol === 1 ? 2 : 1);
-  const qtyColIdx = rawColMap.numberOfCreative !== -1 ? rawColMap.numberOfCreative : (creativeColIdx + 1);
+  // 3. Identify duplicate S.No columns or empty leading columns to exclude
+  const duplicateCols = new Set();
+  if (rawColMap.sno.length >= 2) {
+    for (let k = 1; k < rawColMap.sno.length; k++) {
+      duplicateCols.add(rawColMap.sno[k]);
+    }
+  }
+  for (let c = 0; c < firstUsefulCol; c++) {
+    duplicateCols.add(c);
+  }
 
-  // Extract clean column indices (excluding duplicate S.No)
+  const creativeColIdx = rawColMap.launchCreative !== -1 
+    ? rawColMap.launchCreative 
+    : (snoColIdx !== -1 ? snoColIdx + 1 : firstUsefulCol);
+  const qtyColIdx = rawColMap.numberOfCreative !== -1 
+    ? rawColMap.numberOfCreative 
+    : (creativeColIdx + 1);
+
+  // Extract clean column indices
   const cleanColIndices = [];
   for (let c = 0; c < totalCols; c++) {
-    if (c === duplicateSnoCol) continue;
+    if (duplicateCols.has(c)) continue;
     cleanColIndices.push(c);
   }
 
-  const cleanHeaders = cleanColIndices.map((c) => {
+  const cleanHeaders = cleanColIndices.map((c, idx) => {
     const val = (headerRow[c] !== undefined && headerRow[c] !== null) ? headerRow[c].toString().trim() : '';
     if (val) return val;
-    if (c === snoColIdx) return 'S.No';
+    if (c === snoColIdx || idx === 0) return 'S.No';
     if (c === creativeColIdx) return 'Deliverable / Scope of Work';
     if (c === qtyColIdx) return 'Quantity / Frequency';
     return '';
   });
 
   const firstThreeHeaders = [
-    headerRow[snoColIdx]?.toString().trim() || 'S.No',
-    headerRow[creativeColIdx]?.toString().trim() || 'Deliverable / Scope of Work',
-    headerRow[qtyColIdx]?.toString().trim() || 'Quantity / Frequency'
+    cleanHeaders[0] || 'S.No',
+    cleanHeaders[1] || 'Deliverable / Scope of Work',
+    cleanHeaders[2] || 'Quantity / Frequency'
   ];
 
   const items = [];

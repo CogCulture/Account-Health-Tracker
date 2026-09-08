@@ -742,9 +742,9 @@ export default function ScopeOfWorkModal({
                       return (
                         <tr key={item.id || idx}>
                           {(sowData?.headers || []).map((_, cIdx) => {
-                            let val = item.cleanCells?.[cIdx] !== undefined && item.cleanCells[cIdx] !== null && item.cleanCells[cIdx] !== '' 
-                              ? item.cleanCells[cIdx] 
-                              : (item.rawCells?.[cIdx] !== undefined && item.rawCells[cIdx] !== null && item.rawCells[cIdx] !== '' ? item.rawCells[cIdx] : '');
+                            let val = (item.cleanCells?.[cIdx] !== undefined && item.cleanCells[cIdx] !== null) 
+                              ? item.cleanCells[cIdx].toString().trim() 
+                              : '';
                             if (!val && cIdx === 0) {
                               val = item.sno || (idx + 1);
                             }
