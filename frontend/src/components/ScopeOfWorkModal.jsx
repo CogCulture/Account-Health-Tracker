@@ -149,6 +149,100 @@ function renderStatusBadge(statusVal) {
   }
 }
 
+/**
+ * Returns clean layout styles for expanded sheet columns
+ */
+function getColumnStyle(headerText = '', index = 0, isHeader = false) {
+  const norm = (headerText || '').toString().toLowerCase().trim();
+  const isSno = index === 0 || norm === 's.no' || norm === 'sno' || norm === 'sr.no' || norm === '#';
+  const isQty = norm.includes('quantity') || norm.includes('qty') || norm.includes('number of') || norm.includes('no. of') || norm.includes('count') || norm.includes('frequency');
+  const isDeliverable = index === 1 || norm.includes('creative') || norm.includes('deliverable') || norm.includes('scope') || norm.includes('task');
+  const isPlatform = norm.includes('platform') || norm.includes('medium');
+  const isSize = norm.includes('size') || norm.includes('ratio') || norm.includes('pixel') || norm.includes('dimension');
+  const isRemark = norm.includes('remark') || norm.includes('note') || norm.includes('comment');
+
+  const baseStyle = {
+    textAlign: isSno || isQty ? 'center' : 'left',
+    boxSizing: 'border-box',
+    padding: '0.75rem 1rem',
+  };
+
+  if (isSno) {
+    return {
+      ...baseStyle,
+      width: '60px',
+      minWidth: '55px',
+      maxWidth: '70px',
+      fontWeight: 700,
+      color: 'var(--text-muted)',
+    };
+  }
+
+  if (isQty) {
+    return {
+      ...baseStyle,
+      width: '130px',
+      minWidth: '110px',
+      maxWidth: '150px',
+      fontWeight: isHeader ? 700 : 500,
+      color: isHeader ? 'var(--text-muted)' : 'var(--text-primary)',
+    };
+  }
+
+  if (isDeliverable) {
+    return {
+      ...baseStyle,
+      minWidth: '220px',
+      maxWidth: '380px',
+      whiteSpace: 'normal',
+      fontWeight: isHeader ? 700 : 600,
+      color: isHeader ? 'var(--text-muted)' : 'var(--text-primary)',
+    };
+  }
+
+  if (isPlatform) {
+    return {
+      ...baseStyle,
+      minWidth: '130px',
+      maxWidth: '220px',
+      whiteSpace: 'normal',
+      fontWeight: isHeader ? 700 : 400,
+      color: isHeader ? 'var(--text-muted)' : 'var(--text-secondary)',
+    };
+  }
+
+  if (isSize) {
+    return {
+      ...baseStyle,
+      minWidth: '120px',
+      maxWidth: '200px',
+      whiteSpace: 'normal',
+      fontWeight: isHeader ? 700 : 400,
+      color: isHeader ? 'var(--text-muted)' : 'var(--text-secondary)',
+    };
+  }
+
+  if (isRemark) {
+    return {
+      ...baseStyle,
+      minWidth: '130px',
+      maxWidth: '240px',
+      whiteSpace: 'normal',
+      fontWeight: isHeader ? 700 : 400,
+      color: isHeader ? 'var(--text-muted)' : 'var(--text-secondary)',
+    };
+  }
+
+  return {
+    ...baseStyle,
+    minWidth: '110px',
+    maxWidth: '200px',
+    whiteSpace: 'normal',
+    fontWeight: isHeader ? 700 : 400,
+    color: isHeader ? 'var(--text-muted)' : 'var(--text-secondary)',
+  };
+}
+
 export default function ScopeOfWorkModal({
   isOpen,
   onClose,
@@ -713,15 +807,18 @@ export default function ScopeOfWorkModal({
                 </div>
               ) : isExpanded ? (
                 /* ── FULL SHEET VIEW (All columns from Google Sheet as-is + Status) ── */
-                <table className="sow-data-table">
+                <table className="sow-data-table" style={{ width: '100%', tableLayout: 'auto' }}>
                   <thead>
                     <tr>
-                      {(sowData?.headers || []).map((hdr, hIdx) => (
-                        <th key={hIdx} style={{ textAlign: hIdx === 0 ? 'center' : 'left' }}>
-                          {hdr || (hIdx === 0 ? 'S.No' : '')}
-                        </th>
-                      ))}
-                      <th style={{ width: '130px', textAlign: 'center' }}>Status</th>
+                      {(sowData?.headers || []).map((hdr, hIdx) => {
+                        const style = getColumnStyle(hdr || (hIdx === 0 ? 'S.No' : ''), hIdx, true);
+                        return (
+                          <th key={hIdx} style={style}>
+                            {hdr || (hIdx === 0 ? 'S.No' : '')}
+                          </th>
+                        );
+                      })}
+                      <th style={{ width: '120px', minWidth: '110px', textAlign: 'center', boxSizing: 'border-box', padding: '0.75rem 1rem' }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -741,28 +838,24 @@ export default function ScopeOfWorkModal({
 
                       return (
                         <tr key={item.id || idx}>
-                          {(sowData?.headers || []).map((_, cIdx) => {
+                          {(sowData?.headers || []).map((hdr, cIdx) => {
                             let val = (item.cleanCells?.[cIdx] !== undefined && item.cleanCells[cIdx] !== null) 
                               ? item.cleanCells[cIdx].toString().trim() 
                               : '';
                             if (!val && cIdx === 0) {
                               val = item.sno || (idx + 1);
                             }
+                            const cellStyle = getColumnStyle(hdr || (cIdx === 0 ? 'S.No' : ''), cIdx, false);
                             return (
                               <td 
                                 key={cIdx} 
-                                style={{ 
-                                  textAlign: cIdx === 0 ? 'center' : 'left', 
-                                  fontWeight: cIdx === 0 ? 700 : 400, 
-                                  color: cIdx === 0 ? 'var(--text-muted)' : 'var(--text-primary)',
-                                  whiteSpace: cIdx === 1 ? 'normal' : 'nowrap'
-                                }}
+                                style={cellStyle}
                               >
                                 {val || '—'}
                               </td>
                             );
                           })}
-                          <td style={{ textAlign: 'center' }}>
+                          <td style={{ textAlign: 'center', width: '120px', padding: '0.75rem 1rem' }}>
                             <button
                               type="button"
                               onClick={() => toggleItemStatus(item.id, statusVal)}

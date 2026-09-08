@@ -653,10 +653,22 @@ export function parseSOWRows(rows, clientName) {
     ? rawColMap.numberOfCreative 
     : (creativeColIdx + 1);
 
+  // Helper to verify if a column has a header or actual content
+  const isColMeaningful = (c) => {
+    if (c === snoColIdx || c === creativeColIdx || c === qtyColIdx) return true;
+    const h = (headerRow[c] || '').toString().trim();
+    if (h) return true;
+    for (let r = 0; r < Math.min(30, rows.length); r++) {
+      if ((rows[r]?.[c] || '').toString().trim()) return true;
+    }
+    return false;
+  };
+
   // Extract clean column indices
   const cleanColIndices = [];
   for (let c = 0; c < totalCols; c++) {
     if (duplicateCols.has(c)) continue;
+    if (!isColMeaningful(c)) continue;
     cleanColIndices.push(c);
   }
 
