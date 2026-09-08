@@ -685,10 +685,9 @@ export function parseSOWRows(rows, clientName) {
     for (let c = 0; c < totalCols; c++) {
       rawCells.push((row[c] !== undefined && row[c] !== null) ? row[c].toString().trim() : '');
     }
-    const cleanCells = cleanColIndices.map(c => rawCells[c] || '');
 
-    // Check if section header banner
-    if (nonEmpties.length === 1 || (nonEmpties.length <= 2 && isNaN(nonEmpties[0].val) && (!nonEmpties[1] || isNaN(nonEmpties[1].val)))) {
+    // Check if section header banner (single text cell across the row, e.g. "MAINLINE", "DIGITAL MARKETING")
+    if (nonEmpties.length === 1) {
       const firstText = nonEmpties[0].val;
       const lowerFirst = firstText.toLowerCase();
       if (isNaN(firstText) && firstText.length >= 2 && 
@@ -708,7 +707,7 @@ export function parseSOWRows(rows, clientName) {
           isMonthly: false,
           remarks: '',
           rawCells,
-          cleanCells,
+          cleanCells: cleanColIndices.map((c, colIdx) => colIdx === 0 ? '' : (rawCells[c] || '')),
         });
         continue;
       }
@@ -734,6 +733,15 @@ export function parseSOWRows(rows, clientName) {
         lowerItem === 'launch creative' || lowerItem === 'total') {
       continue;
     }
+
+    const finalSno = snoVal || (items.filter(x => !x.isSectionHeader).length + 1).toString();
+    const cleanCells = cleanColIndices.map((c, colIdx) => {
+      let v = rawCells[c] || '';
+      if (!v && colIdx === 0) {
+        v = finalSno;
+      }
+      return v;
+    });
 
     // Monthly recurring detection
     const combinedLower = `${launchCreativeVal} ${numCreativeVal} ${currentSection} ${remarksVal}`.toLowerCase();
@@ -761,7 +769,7 @@ export function parseSOWRows(rows, clientName) {
       rowIndex: i + 1,
       isSectionHeader: false,
       sectionTitle: currentSection,
-      sno: snoVal || (items.filter(x => !x.isSectionHeader).length + 1),
+      sno: finalSno,
       launchCreative: launchCreativeVal,
       numberOfCreative: numCreativeVal || (isMonthly ? 'Monthly' : '1'),
       isMonthly,

@@ -718,7 +718,7 @@ export default function ScopeOfWorkModal({
                     <tr>
                       {(sowData?.headers || []).map((hdr, hIdx) => (
                         <th key={hIdx} style={{ textAlign: hIdx === 0 ? 'center' : 'left' }}>
-                          {hdr}
+                          {hdr || (hIdx === 0 ? 'S.No' : '')}
                         </th>
                       ))}
                       <th style={{ width: '130px', textAlign: 'center' }}>Status</th>
@@ -742,9 +742,12 @@ export default function ScopeOfWorkModal({
                       return (
                         <tr key={item.id || idx}>
                           {(sowData?.headers || []).map((_, cIdx) => {
-                            const val = item.cleanCells?.[cIdx] !== undefined && item.cleanCells[cIdx] !== null && item.cleanCells[cIdx] !== '' 
+                            let val = item.cleanCells?.[cIdx] !== undefined && item.cleanCells[cIdx] !== null && item.cleanCells[cIdx] !== '' 
                               ? item.cleanCells[cIdx] 
-                              : (item.rawCells?.[cIdx] !== undefined && item.rawCells[cIdx] !== null && item.rawCells[cIdx] !== '' ? item.rawCells[cIdx] : '—');
+                              : (item.rawCells?.[cIdx] !== undefined && item.rawCells[cIdx] !== null && item.rawCells[cIdx] !== '' ? item.rawCells[cIdx] : '');
+                            if (!val && cIdx === 0) {
+                              val = item.sno || (idx + 1);
+                            }
                             return (
                               <td 
                                 key={cIdx} 
@@ -755,7 +758,7 @@ export default function ScopeOfWorkModal({
                                   whiteSpace: cIdx === 1 ? 'normal' : 'nowrap'
                                 }}
                               >
-                                {val}
+                                {val || '—'}
                               </td>
                             );
                           })}
