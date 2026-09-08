@@ -388,10 +388,9 @@ export default function App() {
 
   // ── Batch-load all clients for Overview Dashboard ────────────────────────
   const batchLoadAllClients = useCallback(async (clientList, onClientDone) => {
-    // Process in chunks of 3 to avoid hitting the Google Sheets
-    // "60 read requests per minute per user" quota limit.
-    const CHUNK_SIZE = 3;
-    const DELAY_MS = 2000; // ~2.0s between chunks → safely under 60 req/min limit
+    // Process 1 client at a time with a delay to stay safely under Google's 60 req/min limit
+    const CHUNK_SIZE = 1;
+    const DELAY_MS = 600;
 
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 

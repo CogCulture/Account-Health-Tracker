@@ -170,9 +170,9 @@ class RateLimitedQueue {
   }
 }
 
-const sheetsQueue = new RateLimitedQueue(2, 250); // max 2 concurrent, at least 250ms spacing
+const sheetsQueue = new RateLimitedQueue(1, 400); // 1 concurrent request, 400ms spacing
 
-async function callWithRetry(fn, retries = 5, initialDelay = 2000) {
+async function callWithRetry(fn, retries = 6, initialDelay = 3000) {
   let delay = initialDelay;
   for (let i = 0; i <= retries; i++) {
     try {
