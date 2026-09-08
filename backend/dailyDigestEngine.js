@@ -612,12 +612,17 @@ export async function sendManagementDigestFromSnapshot(snapshot, { to = null, fo
 
   const normalizedRecipients = normalizeRecipients(recipients);
   const signature = getManagementDigestSignature(snapshot, normalizedRecipients);
-  const sentDigests = snapshot.sentManagementDigests || [];
-  const alreadySent = sentDigests.some(item => item?.signature === signature);
+  const snapshots = await getDailyDigestSnapshotsCollection();
 
-  if (alreadySent && !force) {
-    console.warn(`[dailyDigestEngine] Management digest ${snapshot.dateKey} already sent to ${normalizedRecipients.join(', ')} with this content. Skipping duplicate send.`);
-    return { sent: false, skipped: true, reason: 'duplicate', signature };
+  if (!force) {
+    const liveSnapshot = await snapshots.findOne({ _id: snapshot._id });
+    const sentDigests = liveSnapshot?.sentManagementDigests || snapshot.sentManagementDigests || [];
+    const alreadySent = sentDigests.some(item => item?.signature === signature);
+
+    if (alreadySent) {
+      console.warn(`[dailyDigestEngine] Management digest ${snapshot.dateKey} already sent to ${normalizedRecipients.join(', ')} with this content. Skipping duplicate send.`);
+      return { sent: false, skipped: true, reason: 'duplicate', signature };
+    }
   }
 
   console.log(`[dailyDigestEngine] Sending management digest from snapshot ${snapshot.dateKey} to ${normalizedRecipients.join(', ')}...`);
@@ -630,7 +635,6 @@ export async function sendManagementDigestFromSnapshot(snapshot, { to = null, fo
 
   if (!ok) return { sent: false, skipped: false, reason: 'email_failed', signature };
 
-  const snapshots = await getDailyDigestSnapshotsCollection();
   await snapshots.updateOne(
     { _id: snapshot._id },
     {
@@ -707,13 +711,17 @@ export async function sendScopedDigestEmailsFromSnapshot(snapshot, { force = fal
       consolidatedReports: filteredReports,
     };
     const signature = getManagementDigestSignature(scopedSnapshotStub, normalizedRecipients);
-    const sentDigests = snapshot.sentScopedDigests || [];
-    const alreadySent = sentDigests.some(item => item?.signature === signature);
 
-    if (alreadySent && !force) {
-      console.warn(`[dailyDigestEngine] Scoped digest ${snapshot.dateKey} for [${normalizedAllowedPods.join(', ')}] already sent to ${normalizedRecipients.join(', ')}. Skipping duplicate send.`);
-      results.push({ to: normalizedRecipients, allowedPods: normalizedAllowedPods, sent: false, skipped: true, reason: 'duplicate' });
-      continue;
+    if (!force) {
+      const liveSnapshot = await snapshots.findOne({ _id: snapshot._id });
+      const sentDigests = liveSnapshot?.sentScopedDigests || snapshot.sentScopedDigests || [];
+      const alreadySent = sentDigests.some(item => item?.signature === signature);
+
+      if (alreadySent) {
+        console.warn(`[dailyDigestEngine] Scoped digest ${snapshot.dateKey} for [${normalizedAllowedPods.join(', ')}] already sent to ${normalizedRecipients.join(', ')}. Skipping duplicate send.`);
+        results.push({ to: normalizedRecipients, allowedPods: normalizedAllowedPods, sent: false, skipped: true, reason: 'duplicate' });
+        continue;
+      }
     }
 
     console.log(`[dailyDigestEngine] Sending scoped digest "${podName}" ([${normalizedAllowedPods.join(', ')}]) to ${normalizedRecipients.join(', ')}...`);

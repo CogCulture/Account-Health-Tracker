@@ -704,6 +704,8 @@ app.post('/api/daily-digest-snapshot/send-management', alertTriggerLimiter, asyn
     console.error('[server] POST /api/daily-digest-snapshot/send-management error:', err);
     res.status(500).json({ error: err.message || 'Failed to send management digest email.' });
   }
+});
+
 /**
  * POST /api/daily-digest-snapshot/send-scoped
  * Sends scoped digest emails (e.g. Deepakshi -> POD1, POD2, POD4; Khushi -> Panasonic).
@@ -758,11 +760,11 @@ if (isCronEnabled) {
       }
 
       console.log(`[cron] Triggering 11:30 AM management digest email for snapshot dateKey: ${snapshot.dateKey}...`);
-      const result = await sendManagementDigestFromSnapshot(snapshot, { force: true });
+      const result = await sendManagementDigestFromSnapshot(snapshot, { force: false });
       console.log('[cron] Scheduled 11:30 AM management digest email result:', result);
 
       console.log(`[cron] Triggering 11:30 AM scoped digest emails for configured scoped recipients...`);
-      const scopedResults = await sendScopedDigestEmailsFromSnapshot(snapshot, { force: true });
+      const scopedResults = await sendScopedDigestEmailsFromSnapshot(snapshot, { force: false });
       console.log('[cron] Scheduled 11:30 AM scoped digest emails result:', scopedResults);
     } catch (err) {
       console.error('[cron] Scheduled 11:30 AM management email trigger failed:', err.message);
