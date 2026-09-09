@@ -243,6 +243,76 @@ function getColumnStyle(headerText = '', index = 0, isHeader = false) {
   };
 }
 
+/**
+ * Accurately finds the matching tab for a client in the Scope of Work sheet.
+ * Returns null if no tab matches the client/brand name (prevents showing random data).
+ */
+function findMatchingTab(clientName, tabs) {
+  if (!clientName || !Array.isArray(tabs) || tabs.length === 0) return null;
+
+  // 1. Clean client name (strip "(POD...)", "(Team...)", brackets, etc.)
+  const cleanClient = (clientName || '')
+    .replace(/\s*\([^)]*\)/gi, '')
+    .toLowerCase()
+    .trim();
+
+  if (!cleanClient) return null;
+
+  const cleanClientAlpha = cleanClient.replace(/[^a-z0-9]/g, '');
+
+  // 2. Exact match (case-insensitive, trimmed)
+  const exact = tabs.find(t => t.toLowerCase().trim() === cleanClient);
+  if (exact) return exact;
+
+  // 3. Clean alphanumeric match (ignoring punctuation and whitespace)
+  if (cleanClientAlpha.length >= 2) {
+    const alphaMatch = tabs.find(t => {
+      const tAlpha = t.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return tAlpha === cleanClientAlpha && tAlpha.length > 0;
+    });
+    if (alphaMatch) return alphaMatch;
+  }
+
+  // 4. Token / whole word boundary match (e.g., "TVS" matches "TVS Motor" or "TVS Deliverables")
+  const tokenMatch = tabs.find(t => {
+    const tl = t.toLowerCase().trim();
+    if (tl === cleanClient) return true;
+    try {
+      const escaped = cleanClient.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const wordRegex = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i');
+      return wordRegex.test(tl);
+    } catch {
+      return false;
+    }
+  });
+  if (tokenMatch) return tokenMatch;
+
+  // 5. Common brand aliases
+  const aliasMatch = tabs.find(t => {
+    const tl = t.toLowerCase().trim();
+    return (cleanClient.includes('shriram') && tl.includes('shriram')) ||
+           (cleanClient.includes('srhu') && tl.includes('srhu')) ||
+           (cleanClient.includes('trehan') && tl.includes('trehan')) ||
+           (cleanClient.includes('reach') && tl.includes('reach')) ||
+           (cleanClient.includes('aarize') && tl.includes('aarize')) ||
+           (cleanClient.includes('ganga') && tl.includes('ganga')) ||
+           (cleanClient.includes('hfcl') && tl.includes('hfcl')) ||
+           (cleanClient.includes('emaar') && tl.includes('emaar'));
+  });
+  if (aliasMatch) return aliasMatch;
+
+  // 6. If sheet has exactly 1 tab and its name is "Sheet1", accept it for dedicated single-tab sheets
+  if (tabs.length === 1) {
+    const singleLower = tabs[0].toLowerCase().trim();
+    if (singleLower === 'sheet1' || singleLower === 'sheet 1') {
+      return tabs[0];
+    }
+  }
+
+  // No tab matched this specific brand -> Return null (do NOT fallback to tabs[0])
+  return null;
+}
+
 export default function ScopeOfWorkModal({
   isOpen,
   onClose,
@@ -256,7 +326,7 @@ export default function ScopeOfWorkModal({
   onPairsChanged
 }) {
   const [sowId, setSowId] = useState(() => {
-    return propSowId || activePair?.sowId || localStorage.getItem('sow_sheet_override_id') || '';
+    return propSowId || activePair?.sowId || '';
   });
   
   const [sowData, setSowData] = useState(null);
@@ -264,6 +334,7 @@ export default function ScopeOfWorkModal({
   const [selectedTab, setSelectedTab] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [noTabFound, setNoTabFound] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [urlInput, setUrlInput] = useState('');
   const [showUrlInput, setShowUrlInput] = useState(false);
@@ -273,9 +344,12 @@ export default function ScopeOfWorkModal({
   const [manualStatusOverrides, setManualStatusOverrides] = useState({});
 
   useEffect(() => {
-    const idToSet = propSowId || activePair?.sowId || localStorage.getItem('sow_sheet_override_id') || '';
+    const idToSet = propSowId || activePair?.sowId || '';
     setSowId(idToSet);
-  }, [propSowId, activePair]);
+    setSowData(null);
+    setNoTabFound(false);
+    setError('');
+  }, [propSowId, activePair, clientName]);
 
   // Extract monthly category breakdown & jobs for the selected month
   const { allMonthDeliverables, doneDeliverables, categoryStats } = useMemo(() => {
@@ -325,46 +399,36 @@ export default function ScopeOfWorkModal({
     const idToUse = targetId || sowId;
     if (!idToUse) {
       setSowData(null);
+      setAvailableTabs([]);
+      setSelectedTab('');
+      setNoTabFound(false);
       return;
     }
 
     setLoading(true);
     setError('');
+    setNoTabFound(false);
 
     try {
       // 1. Fetch available tabs in the SOW sheet
       const tabs = await fetchSheetTabs(idToUse);
       if (!tabs || tabs.length === 0) {
-        throw new Error('No tabs found in the Scope of Work sheet.');
+        setAvailableTabs([]);
+        setSelectedTab('');
+        setSowData(null);
+        setError('No tabs found in the connected Scope of Work spreadsheet.');
+        return;
       }
       setAvailableTabs(tabs);
 
       // 2. Find tab matching clientName or use tabOverride
-      let matchedTab = tabOverride;
-      if (!matchedTab) {
-        const targetLower = (clientName || '').toLowerCase().trim();
-        matchedTab = tabs.find(t => t.toLowerCase().trim() === targetLower);
-
-        // Clean prefix match (e.g. "Shriram Properties (POD2)" or "Shriram Properties" -> "Shriram")
-        if (!matchedTab) {
-          const cleanName = targetLower.split('(')[0].trim();
-          matchedTab = tabs.find(t => {
-            const tl = t.toLowerCase().trim();
-            return cleanName.includes(tl) || tl.includes(cleanName) ||
-                   (cleanName.includes('shriram') && tl.includes('shriram')) ||
-                   (cleanName.includes('srhu') && tl.includes('srhu')) ||
-                   (cleanName.includes('trehan') && tl.includes('trehan'));
-          });
-        }
-
-        // If only 1 tab exists or none matched, fallback to first tab
-        if (!matchedTab && tabs.length > 0) {
-          matchedTab = tabs[0];
-        }
-      }
+      const matchedTab = tabOverride || findMatchingTab(clientName, tabs);
 
       if (!matchedTab) {
-        throw new Error(`Could not find a tab for "${clientName}" in the Scope of Work sheet.`);
+        setSelectedTab('');
+        setSowData(null);
+        setNoTabFound(true);
+        return;
       }
 
       setSelectedTab(matchedTab);
@@ -387,6 +451,7 @@ export default function ScopeOfWorkModal({
 
   useEffect(() => {
     setSowData(null);
+    setNoTabFound(false);
   }, [clientName]);
 
   useEffect(() => {
@@ -397,6 +462,7 @@ export default function ScopeOfWorkModal({
         }
       } else {
         setSowData(null);
+        setNoTabFound(false);
       }
     }
   }, [isOpen, sowId, clientName]);
@@ -408,10 +474,10 @@ export default function ScopeOfWorkModal({
       return;
     }
 
-    localStorage.setItem('sow_sheet_override_id', extracted);
     setSowId(extracted);
     setUrlInput('');
     setError('');
+    setNoTabFound(false);
 
     // If activePair exists, save to DB in background
     if (activePair) {
@@ -434,11 +500,11 @@ export default function ScopeOfWorkModal({
   };
 
   const handleRemoveSheet = async () => {
-    localStorage.removeItem('sow_sheet_override_id');
     setSowId('');
     setSowData(null);
     setAvailableTabs([]);
     setSelectedTab('');
+    setNoTabFound(false);
     setShowUrlInput(true);
 
     if (activePair) {
@@ -680,7 +746,32 @@ export default function ScopeOfWorkModal({
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            {availableTabs.length > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 600 }}>Tab:</span>
+                <select
+                  value={selectedTab}
+                  onChange={(e) => handleTabChange(e.target.value)}
+                  className="form-control"
+                  style={{
+                    fontSize: '0.76rem',
+                    padding: '0.28rem 0.6rem',
+                    height: 'auto',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    color: 'var(--text-primary)',
+                    borderColor: 'var(--card-border)',
+                    borderRadius: '6px'
+                  }}
+                >
+                  <option value="" disabled>Select Tab ({availableTabs.length})</option>
+                  {availableTabs.map(tab => (
+                    <option key={tab} value={tab}>{tab}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <button
               onClick={() => loadSOWData(sowId, selectedTab)}
               className="btn btn-secondary"
@@ -702,7 +793,7 @@ export default function ScopeOfWorkModal({
             <div className="sow-panel-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden' }}>
                 <span className="sow-panel-title">SCOPE OF WORK (SOW)</span>
-                {sowData?.items && (
+                {sowData?.items && sowData.items.length > 0 && (
                   <span className="sow-count-badge">
                     {filteredSowItems.filter(x => !x.isSectionHeader).length} items
                   </span>
@@ -714,39 +805,41 @@ export default function ScopeOfWorkModal({
                 )}
               </div>
 
-              {/* Expand / Collapse Button on the right side of Scope */}
-              <button
-                type="button"
-                onClick={() => setIsExpanded(prev => !prev)}
-                className="btn btn-secondary sow-expand-btn"
-                style={{
-                  fontSize: '0.74rem',
-                  padding: '0.28rem 0.65rem',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  background: isExpanded ? 'rgba(59, 130, 246, 0.18)' : 'rgba(255, 255, 255, 0.05)',
-                  color: isExpanded ? '#3B82F6' : 'var(--text-primary)',
-                  border: isExpanded ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid var(--card-border)',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  marginLeft: 'auto',
-                  flexShrink: 0
-                }}
-                title={isExpanded ? "Collapse to 3 columns split view" : "Expand Scope of Work to view full sheet with all columns"}
-              >
-                {isExpanded ? (
-                  <>
-                    <Minimize2 size={13} />
-                    <span>Collapse</span>
-                  </>
-                ) : (
-                  <>
-                    <Maximize2 size={13} />
-                    <span>Expand Scope (Full Sheet)</span>
-                  </>
-                )}
-              </button>
+              {/* Expand / Collapse Button only when SOW data is present */}
+              {filteredSowItems.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded(prev => !prev)}
+                  className="btn btn-secondary sow-expand-btn"
+                  style={{
+                    fontSize: '0.74rem',
+                    padding: '0.28rem 0.65rem',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    background: isExpanded ? 'rgba(59, 130, 246, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                    color: isExpanded ? '#3B82F6' : 'var(--text-primary)',
+                    border: isExpanded ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid var(--card-border)',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    marginLeft: 'auto',
+                    flexShrink: 0
+                  }}
+                  title={isExpanded ? "Collapse to 3 columns split view" : "Expand Scope of Work to view full sheet with all columns"}
+                >
+                  {isExpanded ? (
+                    <>
+                      <Minimize2 size={13} />
+                      <span>Collapse</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 size={13} />
+                      <span>Expand Scope (Full Sheet)</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
             {/* SOW Table Container with custom scrollbar */}
@@ -760,34 +853,135 @@ export default function ScopeOfWorkModal({
                 </div>
               ) : !sowId ? (
                 <div className="sow-empty-state">
-                  <FileSpreadsheet size={32} style={{ color: '#3B82F6', marginBottom: '0.5rem', opacity: 0.8 }} />
-                  <h4 style={{ fontSize: '0.95rem', fontWeight: 700, margin: '0 0 0.35rem 0', color: 'var(--text-primary)' }}>
-                    No Scope of Work Sheet Ingested
+                  <div style={{
+                    width: '52px',
+                    height: '52px',
+                    borderRadius: '50%',
+                    background: 'rgba(59, 130, 246, 0.1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: '0.85rem',
+                    color: '#3B82F6'
+                  }}>
+                    <FileSpreadsheet size={26} />
+                  </div>
+                  <h4 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.35rem 0', color: 'var(--text-primary)' }}>
+                    No SOW Sheet Configured
                   </h4>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: '380px', lineHeight: 1.5, margin: 0 }}>
-                    Paste your Scope of Work Google Sheets link in the ingestion bar above to load the deliverables table.
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '380px', lineHeight: 1.55, margin: '0 0 1.25rem 0' }}>
+                    No Scope of Work (SOW) sheet is linked for <strong style={{ color: 'var(--text-primary)' }}>{clientName}</strong>.
                   </p>
+                  <div style={{ display: 'flex', gap: '0.5rem', width: '100%', maxWidth: '380px' }}>
+                    <input
+                      type="text"
+                      placeholder="Paste Google Sheet URL..."
+                      value={urlInput}
+                      onChange={e => { setUrlInput(e.target.value); setError(''); }}
+                      className="form-control"
+                      style={{ fontSize: '0.8rem', padding: '0.45rem 0.75rem', flex: 1 }}
+                    />
+                    <button
+                      className="btn btn-primary"
+                      style={{ fontSize: '0.8rem', padding: '0.45rem 0.9rem', whiteSpace: 'nowrap' }}
+                      onClick={handleConnectCustomUrl}
+                      disabled={!urlInput.trim()}
+                    >
+                      Connect SOW
+                    </button>
+                  </div>
                 </div>
-              ) : error ? (
-                <div className="sow-error-state">
-                  <AlertCircle size={24} style={{ color: '#EF4444', marginBottom: '0.35rem' }} />
-                  <p style={{ fontSize: '0.85rem', color: '#EF4444', fontWeight: 600 }}>{error}</p>
-                  <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', maxWidth: '380px', marginTop: '0.2rem', lineHeight: 1.5 }}>
-                    Paste your Scope of Work Google Sheet URL below to connect it directly:
+              ) : noTabFound ? (
+                <div className="sow-empty-state">
+                  <div style={{
+                    width: '52px',
+                    height: '52px',
+                    borderRadius: '50%',
+                    background: 'rgba(245, 158, 11, 0.12)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: '0.85rem',
+                    color: '#F59E0B'
+                  }}>
+                    <FileSpreadsheet size={26} />
+                  </div>
+                  <h4 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.35rem 0', color: 'var(--text-primary)' }}>
+                    No SOW Sheet Found for {clientName}
+                  </h4>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '420px', lineHeight: 1.55, margin: '0 0 1rem 0' }}>
+                    The connected Scope of Work spreadsheet does not have a dedicated tab for <strong style={{ color: 'var(--text-primary)' }}>{clientName}</strong>.
                   </p>
 
-                  <div style={{ marginTop: '0.85rem', display: 'flex', gap: '0.5rem', width: '100%', maxWidth: '420px' }}>
-                    <div style={{ position: 'relative', flex: 1 }}>
-                      <Link2 size={14} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  {availableTabs.length > 0 && (
+                    <div style={{
+                      margin: '0.5rem 0 1rem 0',
+                      padding: '0.85rem 1rem',
+                      borderRadius: '8px',
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid var(--card-border)',
+                      width: '100%',
+                      maxWidth: '400px',
+                      textAlign: 'left'
+                    }}>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.35rem' }}>
+                        Select a tab from sheet if named differently:
+                      </label>
+                      <select
+                        value={selectedTab}
+                        onChange={(e) => handleTabChange(e.target.value)}
+                        className="form-control"
+                        style={{ fontSize: '0.8rem', padding: '0.4rem 0.65rem', width: '100%' }}
+                      >
+                        <option value="" disabled>-- Available Tabs ({availableTabs.length}) --</option>
+                        {availableTabs.map(tab => (
+                          <option key={tab} value={tab}>{tab}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div style={{ width: '100%', maxWidth: '400px' }}>
+                    <label style={{ fontSize: '0.74rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem', textAlign: 'center' }}>
+                      Or connect a dedicated Google Sheet for {clientName}:
+                    </label>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <input
                         type="text"
                         placeholder="https://docs.google.com/spreadsheets/d/..."
                         value={urlInput}
-                        onChange={e => setUrlInput(e.target.value)}
+                        onChange={e => { setUrlInput(e.target.value); setError(''); }}
                         className="form-control"
-                        style={{ paddingLeft: '2.2rem', fontSize: '0.82rem', width: '100%' }}
+                        style={{ fontSize: '0.8rem', padding: '0.45rem 0.75rem', flex: 1 }}
                       />
+                      <button
+                        className="btn btn-primary"
+                        style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem', whiteSpace: 'nowrap' }}
+                        onClick={handleConnectCustomUrl}
+                        disabled={!urlInput.trim()}
+                      >
+                        Connect
+                      </button>
                     </div>
+                  </div>
+                </div>
+              ) : error ? (
+                <div className="sow-error-state">
+                  <AlertCircle size={26} style={{ color: '#EF4444', marginBottom: '0.4rem' }} />
+                  <p style={{ fontSize: '0.88rem', color: '#EF4444', fontWeight: 600, margin: 0 }}>{error}</p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: '380px', marginTop: '0.35rem', lineHeight: 1.5 }}>
+                    Paste your Scope of Work Google Sheet URL below to connect it directly:
+                  </p>
+
+                  <div style={{ marginTop: '0.85rem', display: 'flex', gap: '0.5rem', width: '100%', maxWidth: '400px' }}>
+                    <input
+                      type="text"
+                      placeholder="https://docs.google.com/spreadsheets/d/..."
+                      value={urlInput}
+                      onChange={e => { setUrlInput(e.target.value); setError(''); }}
+                      className="form-control"
+                      style={{ fontSize: '0.8rem', padding: '0.45rem 0.75rem', flex: 1 }}
+                    />
                     <button
                       className="btn btn-primary"
                       style={{ fontSize: '0.8rem', padding: '0.45rem 0.9rem', whiteSpace: 'nowrap' }}
@@ -802,7 +996,7 @@ export default function ScopeOfWorkModal({
                 <div className="sow-empty-state">
                   <Layers size={28} style={{ color: 'var(--text-muted)', marginBottom: '0.5rem' }} />
                   <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
-                    {searchTerm ? 'No scope items matching your search.' : 'No scope items found in this sheet tab.'}
+                    {searchTerm ? 'No scope items matching your search.' : `No scope items found in tab "${selectedTab || 'SOW'}".`}
                   </p>
                 </div>
               ) : isExpanded ? (
