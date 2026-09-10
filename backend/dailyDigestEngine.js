@@ -179,6 +179,7 @@ function getManagementDigestSignature(snapshot, recipients) {
         status: job.status || '',
         dueDate: job.dueDate || '',
         dueLabel: job.dueLabel || '',
+        deliveryDate: job.deliveryDate || '',
       })),
       meetingStats: report.meetingStats || null,
       noDeadlineReason: report.noDeadlineReason || '',
@@ -201,12 +202,6 @@ function buildPendingJobs(jobs, today) {
     const status = (job.status || '').toString().trim();
     const statusLower = status.toLowerCase();
     if (statusLower === 'closed' || statusLower === 'completed') continue;
-    if (
-      statusLower.includes('atr') ||
-      statusLower.includes('agency to revert') ||
-      statusLower.includes('ctr') ||
-      statusLower.includes('client to revert')
-    ) continue;
 
     let diffDays = null;
     let dueLabel = '-';
@@ -230,6 +225,13 @@ function buildPendingJobs(jobs, today) {
       }
     }
 
+    let deliveryDate = '-';
+    if (job.deliveryDate instanceof Date && !isNaN(job.deliveryDate.getTime())) {
+      deliveryDate = formatDateKey(job.deliveryDate);
+    } else if (job.deliveryDate && typeof job.deliveryDate === 'string' && job.deliveryDate.trim() !== '') {
+      deliveryDate = job.deliveryDate.trim();
+    }
+
     pendingJobs.push({
       jobId: job.jobId,
       deliverable: job.deliverable || job.jobId,
@@ -240,16 +242,17 @@ function buildPendingJobs(jobs, today) {
       enteredAtFormatted: job.statusAging?.enteredAtFormatted || '',
       dueDate,
       dueLabel,
+      deliveryDate,
       diffDays,
       isDueTodayOrTomorrow,
       isPanasonic: false,
     });
   }
 
-  // Sort: Today/Tomorrow first, then Overdue, then nearest upcoming
+  // Sort: Overdue first (most overdue to least), then Today, Tomorrow, upcoming by due date, then no date
   pendingJobs.sort((a, b) => {
-    if (a.isDueTodayOrTomorrow && !b.isDueTodayOrTomorrow) return -1;
-    if (!a.isDueTodayOrTomorrow && b.isDueTodayOrTomorrow) return 1;
+    if (a.diffDays !== null && a.diffDays < 0 && (b.diffDays === null || b.diffDays >= 0)) return -1;
+    if (b.diffDays !== null && b.diffDays < 0 && (a.diffDays === null || a.diffDays >= 0)) return 1;
     if (a.diffDays !== null && b.diffDays !== null) return a.diffDays - b.diffDays;
     if (a.diffDays !== null) return -1;
     if (b.diffDays !== null) return 1;
@@ -443,9 +446,10 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
             }
           }
 
+          let scoreData = null;
           if (!jobReadError && !dailyReadError) {
             const assignedPersons = parseAssignedPersons(rawDaily);
-            let scoreData = calculateHealthScore(
+            scoreData = calculateHealthScore(
               dailyRecords,
               jobs,
               label,
@@ -470,8 +474,12 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
 
           clientReports.push({
             clientName,
+            podName,
             pendingJobs,
             meetingStats,
+            healthScore: scoreData ? (scoreData.scores?.percentage ?? null) : null,
+            rating: scoreData ? scoreData.rating : null,
+            scoreData: scoreData ? { scores: scoreData.scores, rating: scoreData.rating } : null,
             noDeadlineReason: !jobReadError && pendingJobs.length === 0 ? getNoDeadlineReason() : '',
             scanReason,
             attendanceReason,
@@ -863,11 +871,12 @@ export async function runDigestForPods(sheets, podNames = []) {
           let scanReason = null;
           let attendanceReason = null;
 
+          let jobs = [];
           if (jobReadError) {
             scanReason = getScanFailureReason(jobReadError);
             console.error(`[dailyDigestEngine] Failed to read Job Tracker for "${clientName}" on pod "${podName}":`, jobReadError.message);
           } else {
-            let jobs = parseJobTrackerRows(rawJobs, clientName, isPanasonic);
+            jobs = parseJobTrackerRows(rawJobs, clientName, isPanasonic);
             try {
               jobs = await syncJobStatusAging(clientName, jobs);
             } catch (err) {
@@ -891,10 +900,28 @@ export async function runDigestForPods(sheets, podNames = []) {
             }
           }
 
+          let scoreData = null;
+          if (!jobReadError && !dailyReadError) {
+            const assignedPersons = parseAssignedPersons(rawDaily);
+            scoreData = calculateHealthScore(
+              dailyRecords,
+              jobs,
+              clientName,
+              today.getMonth(),
+              today.getFullYear(),
+              podName,
+              assignedPersons
+            );
+          }
+
           clientReports.push({
             clientName,
+            podName,
             pendingJobs,
             meetingStats,
+            healthScore: scoreData ? (scoreData.scores?.percentage ?? null) : null,
+            rating: scoreData ? scoreData.rating : null,
+            scoreData: scoreData ? { scores: scoreData.scores, rating: scoreData.rating } : null,
             noDeadlineReason: !jobReadError && pendingJobs.length === 0 ? getNoDeadlineReason() : '',
             scanReason,
             attendanceReason,

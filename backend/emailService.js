@@ -155,47 +155,39 @@ function buildTransportForRecipients(toEmails, ccEmails) {
 
 /**
  * Generates the HTML template and subject for the daily executive digest:
- * 1. Top Section: XL/XXL jobs due TODAY or TOMORROW
- * 2. Second Section: XL/XXL jobs OVERDUE from the past 7 days (1 to 7 days overdue)
- * 3. Bottom Section: Comprehensive Daily Meeting Attendance Grid (All Brands)
+ * 1. Open XL & XXL Deliverables Section (all due/overdue/upcoming for the month grouped together by brand)
+ *    - Brand header displays Brand Name, POD, Health Score, and Attendance Rate.
+ *    - Deliverables table displays Deliverable, Priority, Status, Timeline (Age column removed).
+ * 2. Bottom Section: Comprehensive Brand Health & Daily Meeting Attendance Grid (All Brands)
  */
 export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Teams Summary') {
   const todayStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   const escapedPodName = escapeHTML(podName);
 
-  // 1. Filter jobs for Section 1: Due Today or Tomorrow
-  const dueTodayTomorrowJobs = [];
-  // 2. Filter jobs for Section 2: All Overdue Deliverables (diffDays < 0)
-  const overdueJobs = [];
-
+  // Collect all open jobs across all client reports
+  const allOpenJobs = [];
   for (const report of clientReports || []) {
     for (const job of report.pendingJobs || []) {
-      const item = {
+      allOpenJobs.push({
         ...job,
         clientName: report.clientName,
         podName: report.podName || '',
-      };
-      if (job.diffDays === 0 || job.diffDays === 1 || job.dueLabel === 'Today' || job.dueLabel === 'Tomorrow') {
-        dueTodayTomorrowJobs.push(item);
-      } else if (job.diffDays !== null && job.diffDays < 0) {
-        overdueJobs.push(item);
-      }
+        healthScore: report.healthScore ?? (report.scoreData?.scores?.percentage ?? null),
+        rating: report.rating || (report.scoreData?.rating ?? ''),
+        meetingStats: report.meetingStats || null,
+      });
     }
   }
 
-  // Sort dueTodayTomorrowJobs: Today first, then Tomorrow
-  dueTodayTomorrowJobs.sort((a, b) => (a.diffDays ?? 0) - (b.diffDays ?? 0));
+  // Count stats
+  const totalOpenCount = allOpenJobs.length;
+  const overdueCount = allOpenJobs.filter(j => j.diffDays !== null && j.diffDays < 0).length;
+  const dueTodayTomorrowCount = allOpenJobs.filter(j => j.diffDays === 0 || j.diffDays === 1 || j.dueLabel === 'Today' || j.dueLabel === 'Tomorrow').length;
 
-  // Sort overdueJobs: Most severely overdue first (e.g. -30, -15, ... -1)
-  overdueJobs.sort((a, b) => (a.diffDays ?? 0) - (b.diffDays ?? 0));
-
-  const totalDueCount = dueTodayTomorrowJobs.length;
-  const totalOverdueCount = overdueJobs.length;
-
-  const subject = `[JSR Report] ${escapedPodName} - ${totalDueCount} Due Today/Tomorrow & ${totalOverdueCount} Overdue (${todayStr})`;
+  const subject = `[JSR Report] ${escapedPodName} - ${totalOpenCount} Open XL/XXL Deliverables & Brand Health (${todayStr})`;
 
   const priorityBadge = (priority) => {
-    const isXXL = priority === 'XXL';
+    const isXXL = (priority || '').toString().trim().toUpperCase() === 'XXL';
     const bg = isXXL ? '#0d9488' : '#d97706';
     return `<span style="background-color: ${bg}; color: #ffffff; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10.5px; letter-spacing: 0.3px; display: inline-block;">${escapeHTML(priority)}</span>`;
   };
@@ -216,72 +208,96 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
     return `<span style="background-color: ${bg}; color: #ffffff; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 10.5px; display: inline-block;">${escapeHTML(raw || 'In Progress')}</span>`;
   };
 
-  // Helper to render grouped jobs table by brand
-  const renderJobsByBrand = (jobsList, type = 'due') => {
-    if (jobsList.length === 0) {
-      if (type === 'due') {
-        return `
-          <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; text-align: center;">
-            <p style="margin: 0; font-size: 13.5px; color: #166534; font-weight: 600;">
-              ✅ No XL / XXL deliverables due today or tomorrow.
-            </p>
-          </div>
-        `;
-      } else {
-        return `
-          <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; text-align: center;">
-            <p style="margin: 0; font-size: 13.5px; color: #166534; font-weight: 600;">
-              ✅ No overdue XL / XXL deliverables.
-            </p>
-          </div>
-        `;
-      }
+  const healthScoreBadge = (healthScore, rating = '') => {
+    if (healthScore === null || healthScore === undefined) {
+      return `<span style="background: #f1f5f9; color: #64748b; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px; display: inline-block;">Health: N/A</span>`;
+    }
+    let bg = '#fee2e2';
+    let text = '#b91c1c';
+    if (healthScore >= 80) {
+      bg = '#dcfce7';
+      text = '#15803d';
+    } else if (healthScore >= 60) {
+      bg = '#fef3c7';
+      text = '#b45309';
+    }
+    return `<span style="background-color: ${bg}; color: ${text}; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; display: inline-block;">Health: ${healthScore}%</span>`;
+  };
+
+  const attendanceBadge = (meetingStats) => {
+    if (!meetingStats || meetingStats.unavailable || meetingStats.percentage === undefined || meetingStats.reason) {
+      return `<span style="background: #f1f5f9; color: #64748b; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px; display: inline-block;">Attendance: N/A</span>`;
+    }
+    const pct = meetingStats.percentage;
+    let bg = '#fee2e2';
+    let text = '#b91c1c';
+    if (pct >= 90) {
+      bg = '#dcfce7';
+      text = '#15803d';
+    } else if (pct >= 70) {
+      bg = '#fef3c7';
+      text = '#b45309';
+    }
+    return `<span style="background-color: ${bg}; color: ${text}; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; display: inline-block;">Attendance: ${pct}% (${meetingStats.metDays ?? 0}/${meetingStats.elapsedWeekdays ?? 0}d)</span>`;
+  };
+
+  // Helper to render all open jobs grouped by brand
+  const renderOpenJobsByBrand = (reports) => {
+    // Filter reports that have pending open jobs
+    const activeReportsWithJobs = (reports || []).filter(r => Array.isArray(r.pendingJobs) && r.pendingJobs.length > 0);
+
+    if (activeReportsWithJobs.length === 0) {
+      return `
+        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px 20px; margin-bottom: 24px; text-align: center;">
+          <p style="margin: 0; font-size: 14px; color: #166534; font-weight: 600;">
+            ✅ No open XL / XXL deliverables due for this month.
+          </p>
+        </div>
+      `;
     }
 
-    // Group jobs by brand
-    const grouped = {};
-    for (const job of jobsList) {
-      const key = job.clientName;
-      if (!grouped[key]) {
-        grouped[key] = {
-          clientName: job.clientName,
-          podName: job.podName,
-          jobs: [],
-        };
-      }
-      grouped[key].jobs.push(job);
-    }
-
-    return Object.values(grouped).map(group => {
-      const escapedClient = escapeHTML(group.clientName);
-      const escapedPod = group.podName ? ` <span style="font-size: 11px; font-weight: 500; color: #475569; background: #e2e8f0; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">${escapeHTML(group.podName)}</span>` : '';
+    return activeReportsWithJobs.map(report => {
+      const escapedClient = escapeHTML(report.clientName);
+      const escapedPod = report.podName ? ` <span style="font-size: 11px; font-weight: 600; color: #475569; background: #e2e8f0; padding: 2px 7px; border-radius: 4px; margin-left: 6px;">${escapeHTML(report.podName)}</span>` : '';
+      const hBadge = healthScoreBadge(report.healthScore, report.rating);
+      const jobCount = report.pendingJobs.length;
 
       return `
-        <div style="margin-bottom: 20px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
-          <div style="background: #f8fafc; padding: 9px 14px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center;">
-            <strong style="font-size: 14px; color: #0f172a;">${escapedClient}</strong>${escapedPod}
-            <span style="margin-left: auto; font-size: 11.5px; color: #64748b; font-weight: 600;">
-              ${group.jobs.length} task${group.jobs.length > 1 ? 's' : ''}
-            </span>
-          </div>
+        <div style="margin-bottom: 24px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
+          <!-- Brand Header -->
+          <table style="width: 100%; border-collapse: collapse; background-color: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+            <tr>
+              <td style="padding: 10px 14px; vertical-align: middle; text-align: left;">
+                <span style="font-size: 14px; font-weight: 700; color: #0f172a;">${escapedClient}</span>${escapedPod}
+                <span style="margin-left: 10px;">${hBadge}</span>
+              </td>
+              <td style="padding: 10px 14px; vertical-align: middle; text-align: right; white-space: nowrap;">
+                <span style="font-size: 11.5px; color: #64748b; font-weight: 600; background: #ffffff; border: 1px solid #e2e8f0; padding: 3px 8px; border-radius: 12px;">
+                  ${jobCount} open task${jobCount > 1 ? 's' : ''}
+                </span>
+              </td>
+            </tr>
+          </table>
+
+          <!-- Deliverables Table -->
           <table style="width: 100%; border-collapse: collapse; font-size: 12.5px; line-height: 1.4;">
             <thead>
               <tr style="background-color: #ffffff; border-bottom: 1px solid #e2e8f0; color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; text-align: left;">
                 <th style="padding: 8px 12px; font-weight: 600;">Deliverable</th>
                 <th style="padding: 8px 10px; font-weight: 600; width: 60px;">Priority</th>
                 <th style="padding: 8px 10px; font-weight: 600; width: 95px;">Status</th>
-                <th style="padding: 8px 10px; font-weight: 600; width: 85px;">Age</th>
-                <th style="padding: 8px 12px; font-weight: 600; width: 120px; text-align: right;">Timeline</th>
+                <th style="padding: 8px 10px; font-weight: 600; width: 105px; text-align: center;">Delivery Date</th>
+                <th style="padding: 8px 12px; font-weight: 600; width: 145px; text-align: right;">Timeline</th>
               </tr>
             </thead>
             <tbody>
-              ${group.jobs.map((j, idx) => {
+              ${report.pendingJobs.map((j, idx) => {
                 const isToday = j.dueLabel === 'Today';
                 const isTomorrow = j.dueLabel === 'Tomorrow';
-                const isOverdue = j.dueLabel && j.dueLabel.includes('Overdue');
+                const isOverdue = j.diffDays !== null && j.diffDays < 0;
 
-                let dueColor = '#475569';
-                let dueBadgeBg = '#f1f5f9';
+                let dueColor = '#1e40af';
+                let dueBadgeBg = '#eff6ff';
                 if (isToday) {
                   dueColor = '#991b1b';
                   dueBadgeBg = '#fee2e2';
@@ -293,10 +309,18 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
                   dueBadgeBg = '#fef2f2';
                 }
 
-                const dueText = j.dueLabel && j.dueDate && j.dueDate !== '-'
-                  ? `${j.dueLabel} (${j.dueDate})`
-                  : (j.dueLabel || j.dueDate || '-');
+                let dueText = '-';
+                if (j.dueDate && j.dueDate !== '-') {
+                  if (j.dueLabel && j.dueLabel !== '-') {
+                    dueText = `${j.dueLabel} (${j.dueDate})`;
+                  } else {
+                    dueText = j.dueDate;
+                  }
+                } else if (j.dueLabel && j.dueLabel !== '-') {
+                  dueText = j.dueLabel;
+                }
 
+                const deliveryDateText = j.deliveryDate || '-';
                 const rowBg = idx % 2 === 1 ? '#fafafa' : '#ffffff';
 
                 return `
@@ -310,11 +334,11 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
                     <td style="padding: 9px 10px; vertical-align: middle;">
                       ${statusBadge(j.status, j.statusCategory)}
                     </td>
-                    <td style="padding: 9px 10px; color: #64748b; font-size: 11.5px; vertical-align: middle;">
-                      ${j.daysInStatus !== null && j.daysInStatus !== undefined ? `${escapeHTML(j.daysInStatus)}d` : '-'}
+                    <td style="padding: 9px 10px; color: #475569; font-size: 11.5px; font-weight: 500; text-align: center; vertical-align: middle; white-space: nowrap;">
+                      ${escapeHTML(deliveryDateText)}
                     </td>
                     <td style="padding: 9px 12px; text-align: right; vertical-align: middle;">
-                      <span style="background-color: ${dueBadgeBg}; color: ${dueColor}; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 11px; display: inline-block;">
+                      <span style="background-color: ${dueBadgeBg}; color: ${dueColor}; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; display: inline-block;">
                         ${escapeHTML(dueText)}
                       </span>
                     </td>
@@ -328,42 +352,27 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
     }).join('');
   };
 
-  // Section 1: Due Today / Tomorrow
-  const section1Html = `
-    <div style="margin-bottom: 32px;">
-      <div style="background: linear-gradient(90deg, #fef2f2 0%, #ffffff 100%); border-left: 4px solid #ef4444; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;">
-        <h3 style="margin: 0; font-size: 15px; color: #991b1b; font-weight: 700; display: flex; align-items: center;">
-          ⚡ XL & XXL Deliverables Due Today / Tomorrow
-          <span style="margin-left: 8px; background: #fee2e2; color: #991b1b; padding: 1px 8px; border-radius: 12px; font-size: 12px; font-weight: 700;">
-            ${totalDueCount}
-          </span>
-        </h3>
-      </div>
-      ${renderJobsByBrand(dueTodayTomorrowJobs, 'due')}
-    </div>
-  `;
-
-  // Section 2: Overdue Deliverables
-  const section2Html = `
+  // Section 1: Unified Open XL & XXL Deliverables
+  const deliverablesSectionHtml = `
     <div style="margin-bottom: 36px;">
-      <div style="background: linear-gradient(90deg, #fff7ed 0%, #ffffff 100%); border-left: 4px solid #f97316; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;">
-        <h3 style="margin: 0; font-size: 15px; color: #9a3412; font-weight: 700; display: flex; align-items: center;">
-          ⚠️ Overdue XL & XXL Deliverables
-          <span style="margin-left: 8px; background: #ffedd5; color: #9a3412; padding: 1px 8px; border-radius: 12px; font-size: 12px; font-weight: 700;">
-            ${totalOverdueCount}
+      <div style="background: linear-gradient(90deg, #eff6ff 0%, #ffffff 100%); border-left: 4px solid #3b82f6; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;">
+        <h3 style="margin: 0; font-size: 15px; color: #1e40af; font-weight: 700; display: flex; align-items: center;">
+          📌 Open XL & XXL Deliverables
+          <span style="margin-left: 8px; background: #dbeafe; color: #1e40af; padding: 1px 8px; border-radius: 12px; font-size: 12px; font-weight: 700;">
+            ${totalOpenCount}
           </span>
         </h3>
       </div>
-      ${renderJobsByBrand(overdueJobs, 'overdue')}
+      ${renderOpenJobsByBrand(clientReports)}
     </div>
   `;
 
-  // Section 3: Daily Meeting Attendance Grid (All Brands)
+  // Section 2: Comprehensive Brand Health & Daily Meeting Attendance Grid (All Brands)
   const attendanceGridHtml = `
     <div style="margin-top: 36px; border-top: 2px solid #e2e8f0; padding-top: 24px;">
-      <div style="background: linear-gradient(90deg, #eff6ff 0%, #ffffff 100%); border-left: 4px solid #3b82f6; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;">
-        <h3 style="margin: 0; font-size: 15px; color: #1e40af; font-weight: 700;">
-          📊 Daily Meeting Attendance Grid (Month-to-Date)
+      <div style="background: linear-gradient(90deg, #f8fafc 0%, #ffffff 100%); border-left: 4px solid #64748b; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;">
+        <h3 style="margin: 0; font-size: 15px; color: #334155; font-weight: 700;">
+          📊 Brand Health & Daily Meeting Attendance Grid (Month-to-Date)
         </h3>
       </div>
       <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
@@ -372,33 +381,54 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
             <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0; color: #475569; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; text-align: left;">
               <th style="padding: 10px 12px; font-weight: 700;">Brand</th>
               <th style="padding: 10px 10px; font-weight: 700;">POD</th>
+              <th style="padding: 10px 10px; font-weight: 700; text-align: center;">Health Score</th>
               <th style="padding: 10px 10px; font-weight: 700; text-align: center;">Meeting Days</th>
               <th style="padding: 10px 12px; font-weight: 700; text-align: right;">Attendance Rate</th>
-              <th style="padding: 10px 12px; font-weight: 700; text-align: center; width: 90px;">Health</th>
+              <th style="padding: 10px 12px; font-weight: 700; text-align: center; width: 100px;">Status</th>
             </tr>
           </thead>
           <tbody>
-            ${clientReports.map((report, idx) => {
-              const { clientName, podName: rPodName = '', meetingStats = {}, attendanceReason = '' } = report;
+            ${(clientReports || []).map((report, idx) => {
+              const { clientName, podName: rPodName = '', meetingStats = {}, attendanceReason = '', healthScore = null, rating = '' } = report;
               const isUnavail = meetingStats.unavailable || Boolean(attendanceReason) || Boolean(meetingStats.reason);
               const pct = meetingStats.percentage ?? 0;
 
-              let healthBadge = '';
-              let pctColor = '#0f172a';
-
-              if (isUnavail) {
-                healthBadge = `<span style="background: #f1f5f9; color: #64748b; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 10.5px;">Unavailable</span>`;
-                pctColor = '#64748b';
-              } else if (pct >= 90) {
-                healthBadge = `<span style="background: #dcfce7; color: #15803d; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10.5px;">Good</span>`;
-                pctColor = '#15803d';
-              } else if (pct >= 70) {
-                healthBadge = `<span style="background: #fef3c7; color: #b45309; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10.5px;">Average</span>`;
-                pctColor = '#b45309';
-              } else {
-                healthBadge = `<span style="background: #fee2e2; color: #b91c1c; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10.5px;">Attention</span>`;
-                pctColor = '#b91c1c';
+              let healthScoreText = '-';
+              let healthScoreColor = '#64748b';
+              if (healthScore !== null && healthScore !== undefined) {
+                healthScoreText = `${healthScore}%`;
+                if (healthScore >= 80) healthScoreColor = '#15803d';
+                else if (healthScore >= 60) healthScoreColor = '#b45309';
+                else healthScoreColor = '#b91c1c';
               }
+
+              let statusBadgeHtml = '';
+              if (rating) {
+                let badgeBg = '#fee2e2';
+                let badgeColor = '#b91c1c';
+                if (rating === 'Excellent' || rating === 'Good') {
+                  badgeBg = '#dcfce7';
+                  badgeColor = '#15803d';
+                } else if (rating === 'Average' || rating === 'Needs Attention') {
+                  badgeBg = '#fef3c7';
+                  badgeColor = '#b45309';
+                }
+                statusBadgeHtml = `<span style="background: ${badgeBg}; color: ${badgeColor}; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10.5px;">${escapeHTML(rating)}</span>`;
+              } else if (isUnavail) {
+                statusBadgeHtml = `<span style="background: #f1f5f9; color: #64748b; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 10.5px;">Unavailable</span>`;
+              } else if (pct >= 90) {
+                statusBadgeHtml = `<span style="background: #dcfce7; color: #15803d; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10.5px;">Good</span>`;
+              } else if (pct >= 70) {
+                statusBadgeHtml = `<span style="background: #fef3c7; color: #b45309; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10.5px;">Average</span>`;
+              } else {
+                statusBadgeHtml = `<span style="background: #fee2e2; color: #b91c1c; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10.5px;">Attention</span>`;
+              }
+
+              let pctColor = '#0f172a';
+              if (isUnavail) pctColor = '#64748b';
+              else if (pct >= 90) pctColor = '#15803d';
+              else if (pct >= 70) pctColor = '#b45309';
+              else pctColor = '#b91c1c';
 
               const rowBg = idx % 2 === 1 ? '#fafafa' : '#ffffff';
               const escapedClient = escapeHTML(clientName);
@@ -412,6 +442,9 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
                   <td style="padding: 10px 10px; color: #475569; font-weight: 500;">
                     ${escapedPod}
                   </td>
+                  <td style="padding: 10px 10px; font-weight: 700; color: ${healthScoreColor}; text-align: center;">
+                    ${healthScoreText}
+                  </td>
                   <td style="padding: 10px 10px; color: #475569; text-align: center;">
                     ${isUnavail ? '-' : `${meetingStats.metDays ?? 0} / ${meetingStats.elapsedWeekdays ?? 0}d`}
                   </td>
@@ -419,7 +452,7 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
                     ${isUnavail ? '-' : `${pct}%`}
                   </td>
                   <td style="padding: 10px 12px; text-align: center;">
-                    ${healthBadge}
+                    ${statusBadgeHtml}
                   </td>
                 </tr>
               `;
@@ -440,7 +473,7 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
     </head>
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 20px; -webkit-font-smoothing: antialiased; color: #1e293b;">
       
-      <div style="max-width: 760px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08); border: 1px solid #e2e8f0;">
+      <div style="max-width: 780px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08); border: 1px solid #e2e8f0;">
         
         <!-- Header -->
         <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 24px; color: #ffffff;">
@@ -452,11 +485,14 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
           </div>
           
           <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;">
+            <span style="background: rgba(59, 130, 246, 0.25); border: 1px solid rgba(59, 130, 246, 0.5); color: #bfdbfe; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+              📌 ${totalOpenCount} Open Tasks
+            </span>
             <span style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
-              🚨 ${totalDueCount} Due Today/Tomorrow
+              ⚠️ ${overdueCount} Overdue
             </span>
             <span style="background: rgba(249, 115, 22, 0.2); border: 1px solid rgba(249, 115, 22, 0.4); color: #fdba74; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
-              ⚠️ ${totalOverdueCount} Overdue
+              ⚡ ${dueTodayTomorrowCount} Due Soon
             </span>
             <span style="background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15); color: #cbd5e1; padding: 4px 10px; border-radius: 20px; font-size: 12px;">
               📅 ${todayStr}
@@ -466,8 +502,7 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
 
         <!-- Body -->
         <div style="padding: 24px;">
-          ${section1Html}
-          ${section2Html}
+          ${deliverablesSectionHtml}
           ${attendanceGridHtml}
         </div>
 
@@ -480,7 +515,8 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
         </div>
 
       </div>
-    </div>
+    </body>
+    </html>
   `;
 
   return { subject, html };

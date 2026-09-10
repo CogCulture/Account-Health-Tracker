@@ -3,7 +3,7 @@ import { getLatestDailyDigestSnapshot, sendManagementDigestFromSnapshot } from '
 import { sendPodDigestEmail } from './emailService.js';
 
 async function testSend() {
-  const recipients = ['shourya@cogculture.agency', 'apoorv@cogculture.agency'];
+  const recipients = ['tanushree@cogculture.agency'];
   console.log('[test-email] Attempting to send test management digest to:', recipients);
 
   const snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: true });
