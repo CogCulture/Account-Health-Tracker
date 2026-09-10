@@ -6,8 +6,9 @@ import { POD_RECIPIENTS, SCOPED_DIGEST_CONFIG } from './podConfig.js';
 import { syncJobStatusAging } from './jobStatusTracker.js';
 import crypto from 'node:crypto';
 
-const SHEETS_REQUEST_TIMEOUT_MS = Number(process.env.SHEETS_REQUEST_TIMEOUT_MS || 30000);
-const SHEETS_RETRY_COUNT = Number(process.env.SHEETS_RETRY_COUNT || 2);
+const SHEETS_REQUEST_TIMEOUT_MS = Number(process.env.SHEETS_REQUEST_TIMEOUT_MS || 45000);
+const SHEETS_RETRY_COUNT = Number(process.env.SHEETS_RETRY_COUNT || 8);
+const INITIAL_RATE_LIMIT_DELAY_MS = 15000; // 15 seconds
 const SNAPSHOT_TIMEZONE = 'Asia/Kolkata';
 
 function sleep(ms) {
@@ -25,8 +26,16 @@ function withTimeout(promise, label, timeoutMs = SHEETS_REQUEST_TIMEOUT_MS) {
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
 }
 
-// Standalone sheets API helpers with bounded retries and detailed labels.
-async function callWithRetry(fn, { retries = SHEETS_RETRY_COUNT, delay = 2000, label = 'Google Sheets request' } = {}) {
+// Standalone sheets API helper with progressive 15-90s backoff loop for rate limits.
+async function callWithRetry(
+  fn,
+  {
+    retries = SHEETS_RETRY_COUNT,
+    delay = INITIAL_RATE_LIMIT_DELAY_MS,
+    label = 'Google Sheets request',
+    attempt = 1,
+  } = {}
+) {
   try {
     const startedAt = Date.now();
     const result = await withTimeout(fn(), label);
@@ -44,9 +53,21 @@ async function callWithRetry(fn, { retries = SHEETS_RETRY_COUNT, delay = 2000, l
       (error.message && error.message.toLowerCase().includes('read requests'));
 
     if (isRateLimit && retries > 0) {
-      console.warn(`[sheets API] Rate limit / quota reached for ${label}. Retrying in ${delay}ms... (${retries} retries left)`);
-      await sleep(delay);
-      return callWithRetry(fn, { retries: retries - 1, delay: delay * 2, label });
+      const jitter = Math.floor(Math.random() * 2000); // 0-2s random jitter
+      const waitTime = delay + jitter;
+      const waitSeconds = Math.round(waitTime / 1000);
+      console.warn(
+        `[sheets API] Rate limit / quota reached for "${label}". Pausing & backing off for ${waitSeconds}s before retrying (Attempt ${attempt}/${attempt + retries})...`
+      );
+      await sleep(waitTime);
+      // Progressive backoff: 15s -> 30s -> 45s -> 60s -> max 90s
+      const nextDelay = Math.min(delay + 15000, 90000);
+      return callWithRetry(fn, {
+        retries: retries - 1,
+        delay: nextDelay,
+        label,
+        attempt: attempt + 1,
+      });
     }
     throw error;
   }
@@ -382,6 +403,7 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
 
       for (const clientName of commonClients) {
         const clientStartedAt = Date.now();
+        await sleep(200);
         try {
           console.log(`[dailyDigestEngine] Reading "${clientName}" for pod "${podName}"...`);
           const isPanasonic = (clientName || '').toLowerCase().includes('panasonic') || podName === 'PANASONIC';

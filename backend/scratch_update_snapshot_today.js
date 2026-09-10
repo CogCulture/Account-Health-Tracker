@@ -40,7 +40,7 @@ async function main() {
     });
   }
 
-  const recipients = ['tanushree@cogculture.agency'];
+  const recipients = ['tanushree@cogculture.agency', 'apoorv@cogculture.agency'];
   console.log(`\n[snapshot-updater] Triggering test digest email to ${recipients.join(', ')}...`);
   const emailRes = await sendManagementDigestFromSnapshot(snapshot, { to: recipients, force: true });
   console.log('[snapshot-updater] Email send result:', emailRes);
