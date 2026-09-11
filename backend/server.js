@@ -14,7 +14,15 @@ import { google } from 'googleapis';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import cron from 'node-cron';
 import multer from 'multer';
-import { runDailyDigestCheck, buildAndSaveDailyDigestSnapshot, getLatestDailyDigestSnapshot, sendManagementDigestFromSnapshot, sendScopedDigestEmailsFromSnapshot } from './dailyDigestEngine.js';
+import { 
+  runDailyDigestCheck, 
+  runEveningDigestCheck,
+  buildAndSaveDailyDigestSnapshot, 
+  getLatestDailyDigestSnapshot, 
+  sendManagementDigestFromSnapshot, 
+  sendEveningDigestFromSnapshot,
+  sendScopedDigestEmailsFromSnapshot 
+} from './dailyDigestEngine.js';
 import { syncJobStatusAging } from './jobStatusTracker.js';
 import { sendDailyReminderEmail } from './emailService.js';
 import { getTeamsCollection, getMeetingInsightsCollection } from './db.js';
@@ -65,10 +73,10 @@ const alertTriggerLimiter = rateLimit({
 // Apply global rate limiting to all requests
 app.use(generalLimiter);
 
-// ── CORS: allow Vite dev server and Render frontend ────────────────────────────
+// ── CORS: allow dev server and configured production frontend ────────────────
 const allowedOrigins = process.env.CORS_ORIGIN 
   ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
-  : ['http://localhost:5173', 'http://localhost:5174', 'https://account-health-frontend1.onrender.com'];
+  : ['http://localhost:5173', 'http://localhost:5174'];
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -76,8 +84,6 @@ app.use(cors({
     if (!origin) return callback(null, true);
     if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
     if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) return callback(null, true);
-    // Allow any onrender.com origin as fallback
-    if (origin.endsWith('.onrender.com')) return callback(null, true);
     callback(null, true); // Permissive fallback
   },
   credentials: true,
@@ -520,6 +526,45 @@ app.get('/api/trigger-daily-digest', alertTriggerLimiter, (req, res) => {
   });
 });
 
+/**
+ * GET /api/trigger-evening-digest
+ * Manually triggers the 7:15 PM evening digest email via HTTP request (excluding CTR and Not Required).
+ * Useful for calling from external cron job pingers or manual triggers.
+ */
+app.get('/api/trigger-evening-digest', alertTriggerLimiter, (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const token = req.headers['x-cron-secret'] || req.query.secret;
+    if (token !== cronSecret) {
+      console.warn('[api] Unauthorized attempt to trigger evening digest (invalid or missing secret).');
+      return res.status(401).json({ error: 'Unauthorized: Invalid or missing cron secret.' });
+    }
+  } else {
+    console.warn('[api] Evening digest triggered without CRON_SECRET verification.');
+  }
+
+  const recipientOverride = (typeof req.query.to === 'string' && req.query.to.trim()) 
+    ? req.query.to.trim() 
+    : ((typeof req.query.email === 'string' && req.query.email.trim()) ? req.query.email.trim() : null);
+
+  console.log(`[api] Manual evening digest triggered via HTTP endpoint${recipientOverride ? ` for single recipient (${recipientOverride})` : ''}...`);
+
+  runEveningDigestCheck(sheets, recipientOverride)
+    .then(() => {
+      console.log('[api] Background evening digest completed successfully.');
+    })
+    .catch(err => {
+      console.error('[api] Background evening digest failed:', err);
+    });
+
+  res.json({ 
+    success: true, 
+    message: recipientOverride 
+      ? `Evening digest triggered and sending to ${recipientOverride}.` 
+      : 'Evening digest triggered and running in the background.' 
+  });
+});
+
 // ── Meeting Insights (Fathom sync + manual upload → Mistral extraction) ─────
 
 /**
@@ -822,17 +867,68 @@ app.post('/api/daily-digest-snapshot/send-scoped', alertTriggerLimiter, async (r
   }
 });
 
+/**
+ * GET /api/evening-digest-snapshot
+ * Returns the latest evening digest snapshot from MongoDB for today or fallback.
+ */
+app.get('/api/evening-digest-snapshot', async (req, res) => {
+  try {
+    const fallback = req.query.fallback !== 'false';
+    const snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: fallback, digestType: 'evening', isEvening: true });
+    if (!snapshot) {
+      return res.status(404).json({ error: 'No evening snapshot available yet.' });
+    }
+    res.json(snapshot);
+  } catch (err) {
+    console.error('[server] GET /api/evening-digest-snapshot error:', err);
+    res.status(500).json({ error: 'Failed to retrieve evening digest snapshot.' });
+  }
+});
+
+/**
+ * POST /api/evening-digest-snapshot/build
+ * Re-scans active Google Sheets and updates/builds evening MongoDB snapshot (excluding CTR and Not Required).
+ */
+app.post('/api/evening-digest-snapshot/build', alertTriggerLimiter, async (_req, res) => {
+  try {
+    const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'manual-evening-build', today: new Date(), isEvening: true, digestType: 'evening' });
+    res.json({ success: true, dateKey: snapshot.dateKey, snapshot });
+  } catch (err) {
+    console.error('[server] POST /api/evening-digest-snapshot/build error:', err);
+    res.status(500).json({ error: err.message || 'Failed to build evening digest snapshot.' });
+  }
+});
+
+/**
+ * POST /api/evening-digest-snapshot/send
+ * Sends the evening digest email using the evening snapshot for today.
+ */
+app.post('/api/evening-digest-snapshot/send', alertTriggerLimiter, async (req, res) => {
+  try {
+    const overrideEmail = typeof req.body?.to === 'string' ? req.body.to.trim() : null;
+    const snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: true, digestType: 'evening', isEvening: true });
+    if (!snapshot) {
+      return res.status(404).json({ error: 'No evening snapshot found to send digest.' });
+    }
+    const result = await sendEveningDigestFromSnapshot(snapshot, { to: overrideEmail, force: true });
+    res.json({ success: true, dateKey: snapshot.dateKey, result });
+  } catch (err) {
+    console.error('[server] POST /api/evening-digest-snapshot/send error:', err);
+    res.status(500).json({ error: err.message || 'Failed to send evening digest email.' });
+  }
+});
+
 // ── Background Cron Scheduler ──────────────────────────────────────────────
 const isCronEnabled = process.env.ENABLE_EMAIL_CRON !== 'false';
 
 if (isCronEnabled) {
-  console.log('[cron] Automated daily cron tasks are ENABLED: Snapshot at 11:00 AM IST & Email at 11:30 AM IST.');
+  console.log('[cron] Automated daily cron tasks are ENABLED: Morning (11:00 AM / 11:30 AM IST) & Evening (7:05 PM / 7:15 PM IST).');
 
   // Scheduled daily 11:00 AM snapshot update from live Google Sheets (IST Timezone)
   cron.schedule('0 11 * * *', async () => {
     console.log('[cron] Running scheduled daily 11:00 AM snapshot update...');
     try {
-      const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'cron-11am-build', today: new Date() });
+      const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'cron-11am-build', today: new Date(), digestType: 'morning', isEvening: false });
       console.log(`[cron] Daily 11:00 AM snapshot build completed for dateKey: ${snapshot.dateKey}`);
     } catch (err) {
       console.error('[cron] Scheduled 11:00 AM snapshot update failed:', err.message);
@@ -846,10 +942,10 @@ if (isCronEnabled) {
   cron.schedule('30 11 * * *', async () => {
     console.log('[cron] Running scheduled daily 11:30 AM management digest email trigger...');
     try {
-      let snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: false });
+      let snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: false, digestType: 'morning', isEvening: false });
       if (!snapshot) {
         console.log('[cron] Today\'s snapshot not found at 11:30 AM. Auto-building fresh snapshot now...');
-        snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'cron-1130am-autobuild', today: new Date() });
+        snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'cron-1130am-autobuild', today: new Date(), digestType: 'morning', isEvening: false });
       }
 
       if (!snapshot) {
@@ -866,6 +962,50 @@ if (isCronEnabled) {
       console.log('[cron] Scheduled 11:30 AM scoped digest emails result:', scopedResults);
     } catch (err) {
       console.error('[cron] Scheduled 11:30 AM management email trigger failed:', err.message);
+    }
+  }, {
+    scheduled: true,
+    timezone: "Asia/Kolkata"
+  });
+
+  // Scheduled daily 7:05 PM evening snapshot update from live Google Sheets (IST Timezone)
+  cron.schedule('5 19 * * *', async () => {
+    console.log('[cron] Running scheduled daily 7:05 PM evening snapshot update...');
+    try {
+      const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'cron-705pm-evening-build', today: new Date(), isEvening: true, digestType: 'evening' });
+      console.log(`[cron] Daily 7:05 PM evening snapshot build completed for dateKey: ${snapshot.dateKey}`);
+    } catch (err) {
+      console.error('[cron] Scheduled 7:05 PM evening snapshot update failed:', err.message);
+    }
+  }, {
+    scheduled: true,
+    timezone: "Asia/Kolkata"
+  });
+
+  // Scheduled daily 7:15 PM evening digest email trigger (IST Timezone)
+  cron.schedule('15 19 * * *', async () => {
+    console.log('[cron] Running scheduled daily 7:15 PM evening digest email trigger...');
+    try {
+      let snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: false, digestType: 'evening', isEvening: true });
+      if (!snapshot) {
+        console.log('[cron] Today\'s evening snapshot not found at 7:15 PM. Auto-building fresh evening snapshot now...');
+        snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'cron-715pm-autobuild', today: new Date(), isEvening: true, digestType: 'evening' });
+      }
+
+      if (!snapshot) {
+        console.warn('[cron] 7:15 PM evening mail skipped: Could not build or fetch evening snapshot.');
+        return;
+      }
+
+      console.log(`[cron] Triggering 7:15 PM evening digest email for snapshot dateKey: ${snapshot.dateKey}...`);
+      const result = await sendEveningDigestFromSnapshot(snapshot, { force: false });
+      console.log('[cron] Scheduled 7:15 PM evening digest email result:', result);
+
+      console.log(`[cron] Triggering 7:15 PM scoped evening digest emails for configured scoped recipients...`);
+      const scopedResults = await sendScopedDigestEmailsFromSnapshot(snapshot, { force: false });
+      console.log('[cron] Scheduled 7:15 PM scoped evening digest emails result:', scopedResults);
+    } catch (err) {
+      console.error('[cron] Scheduled 7:15 PM evening email trigger failed:', err.message);
     }
   }, {
     scheduled: true,

@@ -102,7 +102,11 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
 
   // --- PARAMETER 1: JSR Calling (Max 10 pts) ---
   const teamLead = getLeadForTeam(teamName);
-  const isLead = (name) => teamLead.aliases.some(alias => (name || '').toLowerCase().trim().includes(alias));
+  const isLead = (name) => {
+    if (!name) return false;
+    const lower = name.toString().toLowerCase().trim();
+    return teamLead.aliases.some(alias => lower.includes(alias));
+  };
 
   // Verification is always required — unverified rows score 0
   const isVerified = (row) => row.jsrVerified === true;
@@ -113,8 +117,17 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     return (mode === 'in person' || mode === 'in-person') && isVerified(row);
   });
 
-  const leadInPerson = inPersonRows.filter(row => isLead(row.jsrNameCol)).length;
-  const otherInPerson = inPersonRows.filter(row => !isLead(row.jsrNameCol)).length;
+  const isRowLeadAttended = (row) => {
+    if (isLead(row.jsrNameCol)) return true;
+    if (isLead(row.clientServicingNameCol)) return true;
+    if (row.rawRowCells && Array.isArray(row.rawRowCells)) {
+      return row.rawRowCells.some(cell => isLead(cell));
+    }
+    return false;
+  };
+
+  const leadInPerson = inPersonRows.filter(row => isRowLeadAttended(row)).length;
+  const otherInPerson = inPersonRows.filter(row => !isRowLeadAttended(row)).length;
 
   const inPersonCalls = inPersonRows.length;
   let inPersonPoints = 0;
@@ -564,32 +577,60 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     p3: generateP3Solution(creativeAttendDays, managementAttendDays),
     p4: generateP4Solution(p4Score, proactiveDetails, totalJobsCount),
   };
-  const pendingLargeJobs = jobRows.filter(row => {
-    const status = (row.status || '').toString().trim().toLowerCase();
-    const isClosedOrCompleted = status === 'closed' || status === 'completed';
-    const priority = (row.priority || '').toString().trim().toUpperCase();
-    const isLarge = priority === 'XL' || priority === 'XXL';
-    
-    if (isClosedOrCompleted || !isLarge) return false;
-    if (!(row.clientTimeline instanceof Date) || isNaN(row.clientTimeline.getTime())) return false;
+  const PRIORITY_ORDER = { 'XXL': 5, 'XL': 4, 'L': 3, 'M': 2, 'S': 1 };
 
-    const timelineMidnight = new Date(
-      row.clientTimeline.getFullYear(),
-      row.clientTimeline.getMonth(),
-      row.clientTimeline.getDate()
-    );
+  const pendingJobs = jobRows.filter(row => {
+    const deliv = (row.deliverable || '').toString().trim();
+    const status = (row.status || '').toString().trim();
+    const jobType = (row.jobType || '').toString().trim();
+    const hasDate = row.briefDate || row.clientTimeline || row.deliveryDate || row.closingDate;
 
-    const diffTime = timelineMidnight.getTime() - todayMidnight.getTime();
-    const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    // Skip empty placeholder template rows
+    if (!deliv && !status && !jobType && !hasDate) return false;
 
-    // Due in the next 3 days (0 to 3 days remaining)
-    return daysRemaining >= 0 && daysRemaining <= 3;
-  }).map(row => ({
-    jobId: row.jobId,
-    deliverable: row.deliverable || row.jobId,
-    priority: (row.priority || '').toString().trim().toUpperCase(),
-    dueDate: row.clientTimeline.toISOString().split('T')[0],
-  }));
+    const lowerStatus = status.toLowerCase();
+    const isClosedOrCompleted = lowerStatus === 'closed' || lowerStatus === 'completed' || lowerStatus === 'not required anymore' || lowerStatus === 'not required' || lowerStatus === 'cancelled';
+    return !isClosedOrCompleted;
+  }).map(row => {
+    const priority = (row.priority || '').toString().trim().toUpperCase() || 'S';
+    const deadline = row.clientTimeline;
+    let dueDateStr = 'No deadline';
+    let delayDays = 0;
+    let isDelayed = false;
+
+    if (deadline instanceof Date && !isNaN(deadline.getTime())) {
+      dueDateStr = deadline.toISOString().split('T')[0];
+      const dMidnight = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate());
+      const diffMs = todayMidnight.getTime() - dMidnight.getTime();
+      if (diffMs > 0) {
+        delayDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        isDelayed = delayDays > 0;
+      }
+    }
+
+    return {
+      jobId: row.jobId || 'Job',
+      deliverable: row.deliverable || row.jobId || 'Deliverable',
+      priority,
+      status: row.status || 'Pending',
+      dueDate: dueDateStr,
+      rawDueDate: (deadline instanceof Date && !isNaN(deadline.getTime())) ? deadline : null,
+      delayDays,
+      isDelayed,
+      priorityWeight: PRIORITY_ORDER[priority] ?? 0,
+      clientAlterations: row.clientAlterations || 0,
+    };
+  }).sort((a, b) => {
+    if (b.priorityWeight !== a.priorityWeight) {
+      return b.priorityWeight - a.priorityWeight;
+    }
+    if (a.rawDueDate && b.rawDueDate) {
+      return a.rawDueDate.getTime() - b.rawDueDate.getTime();
+    }
+    return 0;
+  });
+
+  const pendingLargeJobs = pendingJobs.filter(j => j.priority === 'XL' || j.priority === 'XXL');
 
   return {
     clientName,
@@ -613,6 +654,7 @@ export function calculateHealthScore(dailyRows, jobRows, clientName, selectedMon
     },
     escalationCount,
     jobsList: allMonthJobs,
+    pendingJobs,
     pendingLargeJobs,
     rating,
     badgeColor,

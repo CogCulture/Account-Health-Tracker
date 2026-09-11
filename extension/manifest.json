@@ -10,8 +10,7 @@
   ],
   "host_permissions": [
     "https://meet.google.com/*",
-    "http://localhost:3001/*",
-    "https://*.onrender.com/*"
+    "http://localhost:3001/*"
   ],
   "background": {
     "service_worker": "background.js"

@@ -13,7 +13,7 @@ const MONTH_NAMES = [
 ];
 
 export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, onSaveSuccess, onReload, meetings = [], sowId, activePair, onPairsChanged }) {
-  const { clientName, month, year, scores, metrics, rating, badgeColor, badgeText, ratingBand, insights, solutions, escalationCount, pendingLargeJobs } = scoreData;
+  const { clientName, month, year, scores, metrics, rating, badgeColor, badgeText, ratingBand, insights, solutions, escalationCount, pendingJobs = [], pendingLargeJobs = [] } = scoreData;
   const monthName = MONTH_NAMES[month];
 
   const lowerName = (clientName || '').toLowerCase().trim();
@@ -28,10 +28,25 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
   const [solutionsOpen, setSolutionsOpen] = useState(false);
   const [isBannerDismissed, setIsBannerDismissed] = useState(false);
   const [showPendingJobsModal, setShowPendingJobsModal] = useState(false);
+  const [pendingFilter, setPendingFilter] = useState('ALL');
+  const [isPendingHovered, setIsPendingHovered] = useState(false);
   const [showEscalationsModal, setShowEscalationsModal] = useState(false);
   const [showAssignedModal, setShowAssignedModal] = useState(false);
   const [showSowModal, setShowSowModal] = useState(false);
   const [internalMeetingsList, setInternalMeetingsList] = useState(meetings);
+
+  const allPendingJobs = (pendingJobs && pendingJobs.length > 0) ? pendingJobs : (pendingLargeJobs || []);
+  const xxlCount = allPendingJobs.filter(j => j.priority === 'XXL').length;
+  const xlCount = allPendingJobs.filter(j => j.priority === 'XL').length;
+  const lCount = allPendingJobs.filter(j => j.priority === 'L').length;
+  const mCount = allPendingJobs.filter(j => j.priority === 'M').length;
+  const sCount = allPendingJobs.filter(j => j.priority === 'S').length;
+  const otherCount = allPendingJobs.filter(j => !['XXL', 'XL', 'L', 'M', 'S'].includes(j.priority)).length;
+  const highPriorityCount = xxlCount + xlCount;
+
+  const filteredPendingJobs = pendingFilter === 'ALL'
+    ? allPendingJobs
+    : allPendingJobs.filter(j => j.priority === pendingFilter);
 
   useEffect(() => {
     if (meetings && meetings.length > 0) {
@@ -618,78 +633,182 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
 
   return (
     <div className="score-screen">
-      {/* Pending XL/XXL Jobs Floating Notification & Modal */}
-      {pendingLargeJobs && pendingLargeJobs.length > 0 && !isBannerDismissed && (
-        <>
+      {/* Inline Pending Jobs Alert Banner (Non-overlapping) */}
+      {allPendingJobs && allPendingJobs.length > 0 && !isBannerDismissed && (
+        <div className="pending-jobs-inline-banner">
           <div 
-            className="pending-jobs-floating-badge" 
+            style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer', flex: 1 }}
             onClick={() => setShowPendingJobsModal(true)}
           >
             <div className="badge-pulse-icon">
-              <AlertTriangle size={16} style={{ color: '#d97706' }} />
+              <AlertTriangle size={18} style={{ color: '#d97706' }} />
             </div>
-            <span style={{ fontWeight: 600 }}>
-              Attention: {pendingLargeJobs.length} High-Priority Job{pendingLargeJobs.length !== 1 ? 's' : ''} (XL/XXL) Pending
-            </span>
+            <div>
+              <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>
+                Attention: {allPendingJobs.length} Pending Deliverable{allPendingJobs.length !== 1 ? 's' : ''} for {clientName}
+              </span>
+              <span style={{ fontSize: '0.78rem', color: '#b45309', marginLeft: '0.6rem', opacity: 0.9 }}>
+                ({xxlCount > 0 ? `${xxlCount} XXL, ` : ''}{xlCount > 0 ? `${xlCount} XL, ` : ''}{lCount > 0 ? `${lCount} L, ` : ''}{mCount > 0 ? `${mCount} M, ` : ''}{sCount > 0 ? `${sCount} S` : ''} - Click to view all)
+              </span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <button 
+              className="btn btn-secondary" 
+              style={{ padding: '0.25rem 0.65rem', fontSize: '0.75rem', height: 'auto', background: '#fff', borderColor: 'rgba(245, 158, 11, 0.5)', color: '#b45309', fontWeight: 600 }}
+              onClick={() => setShowPendingJobsModal(true)}
+            >
+              View All Jobs
+            </button>
             <button 
               className="badge-close-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsBannerDismissed(true);
-              }}
-              title="Dismiss"
+              onClick={() => setIsBannerDismissed(true)}
+              title="Dismiss banner (the Pending Jobs button remains in the toolbar)"
             >
-              <X size={14} />
+              <X size={16} />
             </button>
           </div>
+        </div>
+      )}
 
-          {showPendingJobsModal && (
-            <div className="modal-overlay" onClick={() => setShowPendingJobsModal(false)}>
-              <div className="premium-modal-card" onClick={(e) => e.stopPropagation()}>
-                <div className="modal-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <AlertTriangle style={{ color: '#d97706' }} size={20} />
-                    <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700 }}>Pending High-Priority Jobs</h3>
-                  </div>
-                  <button className="modal-close-icon-btn" onClick={() => setShowPendingJobsModal(false)}>
-                    <X size={18} />
-                  </button>
-                </div>
-                <div className="modal-body">
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1.25rem', lineHeight: 1.5 }}>
-                    Below are the active XL and XXL jobs currently pending for <strong>{clientName}</strong>.
+      {/* Pending Jobs Modal (XXL to Small) */}
+      {showPendingJobsModal && (
+        <div className="modal-overlay" onClick={() => setShowPendingJobsModal(false)}>
+          <div className="premium-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <AlertTriangle style={{ color: '#d97706' }} size={20} />
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700 }}>Pending Deliverables ({allPendingJobs.length})</h3>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    Active pending jobs for <strong>{clientName}</strong>, ordered from XXL to Small
                   </p>
-                  <div style={{ overflowX: 'auto' }}>
-                    <table className="premium-jobs-table">
-                      <thead>
-                        <tr>
-                          {!((clientName || '').toLowerCase().includes('panasonic')) && <th>Job ID</th>}
-                          <th>Deliverable</th>
-                          <th>Priority</th>
-                          <th>Due Date</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pendingLargeJobs.map(job => (
-                          <tr key={job.jobId}>
-                            {!((clientName || '').toLowerCase().includes('panasonic')) && <td className="job-id-cell">{job.jobId}</td>}
-                            <td className="deliverable-cell">{job.deliverable}</td>
-                            <td>
-                              <span className={`priority-badge-${job.priority.toLowerCase()} size-badge`}>
-                                {job.priority}
-                              </span>
-                            </td>
-                            <td className="due-date-cell">{job.dueDate}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
                 </div>
               </div>
+              <button className="modal-close-icon-btn" onClick={() => setShowPendingJobsModal(false)}>
+                <X size={18} />
+              </button>
             </div>
-          )}
-        </>
+            <div className="modal-body">
+              {/* Filter Pills */}
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+                <button
+                  className={`pending-filter-tab ${pendingFilter === 'ALL' ? 'active' : ''}`}
+                  onClick={() => setPendingFilter('ALL')}
+                >
+                  All ({allPendingJobs.length})
+                </button>
+                {xxlCount > 0 && (
+                  <button
+                    className={`pending-filter-tab ${pendingFilter === 'XXL' ? 'active' : ''}`}
+                    onClick={() => setPendingFilter('XXL')}
+                  >
+                    <span className="priority-badge-xxl size-badge">XXL</span> ({xxlCount})
+                  </button>
+                )}
+                {xlCount > 0 && (
+                  <button
+                    className={`pending-filter-tab ${pendingFilter === 'XL' ? 'active' : ''}`}
+                    onClick={() => setPendingFilter('XL')}
+                  >
+                    <span className="priority-badge-xl size-badge">XL</span> ({xlCount})
+                  </button>
+                )}
+                {lCount > 0 && (
+                  <button
+                    className={`pending-filter-tab ${pendingFilter === 'L' ? 'active' : ''}`}
+                    onClick={() => setPendingFilter('L')}
+                  >
+                    <span className="priority-badge-l size-badge">L</span> ({lCount})
+                  </button>
+                )}
+                {mCount > 0 && (
+                  <button
+                    className={`pending-filter-tab ${pendingFilter === 'M' ? 'active' : ''}`}
+                    onClick={() => setPendingFilter('M')}
+                  >
+                    <span className="priority-badge-m size-badge">M</span> ({mCount})
+                  </button>
+                )}
+                {sCount > 0 && (
+                  <button
+                    className={`pending-filter-tab ${pendingFilter === 'S' ? 'active' : ''}`}
+                    onClick={() => setPendingFilter('S')}
+                  >
+                    <span className="priority-badge-s size-badge">S</span> ({sCount})
+                  </button>
+                )}
+              </div>
+
+              {/* Table */}
+              <div style={{ overflowX: 'auto' }}>
+                <table className="premium-jobs-table">
+                  <thead>
+                    <tr>
+                      {!((clientName || '').toLowerCase().includes('panasonic')) && <th>Job ID</th>}
+                      <th>Deliverable</th>
+                      <th>Priority</th>
+                      <th>Status</th>
+                      <th>Client Timeline / Due Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredPendingJobs.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                          No pending jobs found for priority {pendingFilter}.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredPendingJobs.map((job, idx) => {
+                        const priLower = (job.priority || 'other').toLowerCase();
+                        const priClass = ['xxl', 'xl', 'l', 'm', 's'].includes(priLower) 
+                          ? `priority-badge-${priLower}` 
+                          : 'priority-badge-other';
+
+                        return (
+                          <tr key={job.jobId || idx}>
+                            {!((clientName || '').toLowerCase().includes('panasonic')) && (
+                              <td className="job-id-cell">{job.jobId}</td>
+                            )}
+                            <td className="deliverable-cell">{job.deliverable}</td>
+                            <td>
+                              <span className={`${priClass} size-badge`}>
+                                {job.priority || 'S'}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                {job.status || 'Pending'}
+                              </span>
+                            </td>
+                            <td className="due-date-cell">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                <span>{job.dueDate}</span>
+                                {job.isDelayed && (
+                                  <span style={{ 
+                                    fontSize: '0.65rem', 
+                                    background: 'rgba(239, 68, 68, 0.12)', 
+                                    color: '#dc2626', 
+                                    padding: '0.1rem 0.35rem', 
+                                    borderRadius: '4px',
+                                    fontWeight: 700 
+                                  }}>
+                                    +{job.delayDays}d overdue
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Results Header */}
@@ -709,6 +828,103 @@ export default function ScoreScreen({ scoreData, allClientScores = {}, onReset, 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
           {/* Top row: Compact Action Buttons */}
           <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Persistent Pending Jobs Button with Hover Tooltip */}
+            {allPendingJobs.length > 0 && (
+              <div 
+                className="pending-jobs-action-wrapper" 
+                style={{ position: 'relative' }}
+                onMouseEnter={() => setIsPendingHovered(true)}
+                onMouseLeave={() => setIsPendingHovered(false)}
+              >
+                <button
+                  onClick={() => setShowPendingJobsModal(true)}
+                  className="btn pending-jobs-action-btn"
+                  style={{
+                    padding: '0.35rem 0.65rem',
+                    fontSize: '0.78rem',
+                    gap: '0.35rem',
+                    height: 'auto',
+                    background: highPriorityCount > 0 ? 'rgba(245, 158, 11, 0.15)' : 'var(--bg-secondary)',
+                    border: highPriorityCount > 0 ? '1px solid rgba(245, 158, 11, 0.45)' : '1px solid var(--card-border)',
+                    color: highPriorityCount > 0 ? '#d97706' : 'var(--text-primary)',
+                    fontWeight: 600,
+                    borderRadius: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                  title="Click to view all pending jobs from XXL to Small"
+                >
+                  <AlertTriangle size={13} style={{ color: highPriorityCount > 0 ? '#d97706' : 'var(--text-secondary)' }} />
+                  <span>Pending Jobs ({allPendingJobs.length})</span>
+                  {highPriorityCount > 0 && (
+                    <span style={{ 
+                      fontSize: '0.65rem', 
+                      background: '#d97706', 
+                      color: '#fff', 
+                      padding: '0.1rem 0.35rem', 
+                      borderRadius: '999px',
+                      fontWeight: 800
+                    }}>
+                      {highPriorityCount} High
+                    </span>
+                  )}
+                </button>
+
+                {/* Hover Popover showing breakdown */}
+                {isPendingHovered && !showPendingJobsModal && (
+                  <div className="pending-jobs-hover-tooltip">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', borderBottom: '1px solid var(--card-border)', paddingBottom: '0.35rem' }}>
+                      <strong style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>Pending Deliverables</strong>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--accent-primary)', fontWeight: 700 }}>Total: {allPendingJobs.length}</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.78rem' }}>
+                      {xxlCount > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span className="priority-badge-xxl size-badge">XXL Priority</span>
+                          <strong>{xxlCount} job{xxlCount !== 1 ? 's' : ''}</strong>
+                        </div>
+                      )}
+                      {xlCount > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span className="priority-badge-xl size-badge">XL Priority</span>
+                          <strong>{xlCount} job{xlCount !== 1 ? 's' : ''}</strong>
+                        </div>
+                      )}
+                      {lCount > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span className="priority-badge-l size-badge">L Priority</span>
+                          <strong>{lCount} job{lCount !== 1 ? 's' : ''}</strong>
+                        </div>
+                      )}
+                      {mCount > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span className="priority-badge-m size-badge">M Priority</span>
+                          <strong>{mCount} job{mCount !== 1 ? 's' : ''}</strong>
+                        </div>
+                      )}
+                      {sCount > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span className="priority-badge-s size-badge">S Priority</span>
+                          <strong>{sCount} job{sCount !== 1 ? 's' : ''}</strong>
+                        </div>
+                      )}
+                      {otherCount > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span className="priority-badge-other size-badge">Other</span>
+                          <strong>{otherCount} job{otherCount !== 1 ? 's' : ''}</strong>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ marginTop: '0.5rem', paddingTop: '0.35rem', borderTop: '1px solid var(--card-border)', fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+                      Click button to view all details
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <button
               onClick={onReload}
               className="btn btn-secondary"

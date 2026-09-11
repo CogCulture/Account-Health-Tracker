@@ -96,6 +96,7 @@ export async function syncJobStatusAging(brandName, jobs = []) {
           statusAging,
         });
 
+        const safeJobName = String(job.deliverable || job.jobName || job.task || jobIdentifier).slice(0, 300);
         bulkOps.push({
           updateOne: {
             filter: { jobKey },
@@ -103,9 +104,9 @@ export async function syncJobStatusAging(brandName, jobs = []) {
               $set: {
                 jobKey,
                 brandKey: cleanBrand,
-                jobName: job.deliverable || job.jobName || job.task || jobIdentifier,
+                jobName: safeJobName,
                 statusCategory,
-                rawStatus: job.status,
+                rawStatus: String(job.status || '').slice(0, 100),
                 enteredAt,
                 lastUpdated: now,
               }
@@ -131,7 +132,11 @@ export async function syncJobStatusAging(brandName, jobs = []) {
     }
 
     if (bulkOps.length > 0) {
-      await collection.bulkWrite(bulkOps);
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < bulkOps.length; i += BATCH_SIZE) {
+        const batch = bulkOps.slice(i, i + BATCH_SIZE);
+        await collection.bulkWrite(batch, { ordered: false });
+      }
     }
 
     return updatedJobs;

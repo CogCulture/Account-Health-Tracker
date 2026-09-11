@@ -155,16 +155,17 @@ function buildTransportForRecipients(toEmails, ccEmails) {
 
 /**
  * Generates the HTML template and subject for the daily executive digest:
- * 1. Open XL & XXL Deliverables Section (all due/overdue/upcoming for the month grouped together by brand)
+ * 1. Open / Evening Deliverables Section (all due/overdue/upcoming for the month grouped together by brand)
  *    - Brand header displays Brand Name, POD, Health Score, and Attendance Rate.
- *    - Deliverables table displays Deliverable, Priority, Status, Timeline (Age column removed).
+ *    - Deliverables table displays Deliverable, Priority, Status, Timeline.
  * 2. Bottom Section: Comprehensive Brand Health & Daily Meeting Attendance Grid (All Brands)
  */
-export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Teams Summary') {
+export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Teams Summary', options = {}) {
+  const isEvening = typeof options === 'boolean' ? options : Boolean(options?.isEvening);
   const todayStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   const escapedPodName = escapeHTML(podName);
 
-  // Collect all open jobs across all client reports
+  // Collect all jobs across all client reports
   const allOpenJobs = [];
   for (const report of clientReports || []) {
     for (const job of report.pendingJobs || []) {
@@ -181,24 +182,39 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
 
   // Count stats
   const totalOpenCount = allOpenJobs.length;
-  const overdueCount = allOpenJobs.filter(j => j.diffDays !== null && j.diffDays < 0).length;
-  const dueTodayTomorrowCount = allOpenJobs.filter(j => j.diffDays === 0 || j.diffDays === 1 || j.dueLabel === 'Today' || j.dueLabel === 'Tomorrow').length;
+  const completedCount = allOpenJobs.filter(j => {
+    const s = (j.status || '').toLowerCase();
+    return s.includes('closed') || s.includes('completed') || s.includes('done') || s.includes('delivered') || j.isCompleted;
+  }).length;
+  const overdueCount = allOpenJobs.filter(j => !j.isCompleted && j.diffDays !== null && j.diffDays < 0).length;
+  const dueTodayTomorrowCount = allOpenJobs.filter(j => !j.isCompleted && (j.diffDays === 0 || j.diffDays === 1 || j.dueLabel === 'Today' || j.dueLabel === 'Tomorrow')).length;
+  const activeCount = totalOpenCount - completedCount;
 
-  const subject = `[JSR Report] ${escapedPodName} - ${totalOpenCount} Open XL/XXL Deliverables & Brand Health (${todayStr})`;
+  const subject = isEvening
+    ? `[JSR Evening Digest] ${escapedPodName} - ${totalOpenCount} Deliverables & Brand Health (${todayStr})`
+    : `[JSR Report] ${escapedPodName} - ${totalOpenCount} Open XL/XXL Deliverables & Brand Health (${todayStr})`;
 
   const priorityBadge = (priority) => {
-    const isXXL = (priority || '').toString().trim().toUpperCase() === 'XXL';
-    const bg = isXXL ? '#0d9488' : '#d97706';
-    return `<span style="background-color: ${bg}; color: #ffffff; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10.5px; letter-spacing: 0.3px; display: inline-block;">${escapeHTML(priority)}</span>`;
+    const p = (priority || '').toString().trim().toUpperCase();
+    if (!p || p === '-') {
+      return `<span style="background-color: #f1f5f9; color: #64748b; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 10px; display: inline-block;">-</span>`;
+    }
+    const isXXL = p === 'XXL';
+    const isXL = p === 'XL';
+    let bg = '#475569';
+    if (isXXL) bg = '#0d9488';
+    else if (isXL) bg = '#d97706';
+    else if (p === 'L') bg = '#2563eb';
+    return `<span style="background-color: ${bg}; color: #ffffff; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10.5px; letter-spacing: 0.3px; display: inline-block;">${escapeHTML(p)}</span>`;
   };
 
   const statusBadge = (status, category) => {
     const raw = (status || category || '').toString().trim();
     const normalized = raw.toUpperCase();
     let bg = '#475569';
-    if (normalized.includes('CLOSED') || normalized.includes('COMPLETED')) {
+    if (normalized.includes('CLOSED') || normalized.includes('COMPLETED') || normalized.includes('DONE') || normalized.includes('DELIVERED')) {
       bg = '#059669';
-    } else if (normalized.includes('PROGRESS') || normalized.includes('WIP')) {
+    } else if (normalized.includes('PROGRESS') || normalized.includes('WIP') || normalized.includes('ACTIVE')) {
       bg = '#d97706';
     } else if (normalized.includes('CTR') || normalized.includes('CLIENT TO REVERT')) {
       bg = '#2563eb';
@@ -241,7 +257,7 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
     return `<span style="background-color: ${bg}; color: ${text}; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; display: inline-block;">Attendance: ${pct}% (${meetingStats.metDays ?? 0}/${meetingStats.elapsedWeekdays ?? 0}d)</span>`;
   };
 
-  // Helper to render all open jobs grouped by brand
+  // Helper to render all open/evening jobs grouped by brand
   const renderOpenJobsByBrand = (reports) => {
     // Filter reports that have pending open jobs
     const activeReportsWithJobs = (reports || []).filter(r => Array.isArray(r.pendingJobs) && r.pendingJobs.length > 0);
@@ -250,7 +266,7 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
       return `
         <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px 20px; margin-bottom: 24px; text-align: center;">
           <p style="margin: 0; font-size: 14px; color: #166534; font-weight: 600;">
-            ✅ No open XL / XXL deliverables due for this month.
+            ✅ ${isEvening ? 'No active deliverables due (excluding CTR & Not Required).' : 'No open XL / XXL deliverables due for this month.'}
           </p>
         </div>
       `;
@@ -273,7 +289,7 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
               </td>
               <td style="padding: 10px 14px; vertical-align: middle; text-align: right; white-space: nowrap;">
                 <span style="font-size: 11.5px; color: #64748b; font-weight: 600; background: #ffffff; border: 1px solid #e2e8f0; padding: 3px 8px; border-radius: 12px;">
-                  ${jobCount} open task${jobCount > 1 ? 's' : ''}
+                  ${jobCount} task${jobCount > 1 ? 's' : ''}
                 </span>
               </td>
             </tr>
@@ -294,11 +310,15 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
               ${report.pendingJobs.map((j, idx) => {
                 const isToday = j.dueLabel === 'Today';
                 const isTomorrow = j.dueLabel === 'Tomorrow';
-                const isOverdue = j.diffDays !== null && j.diffDays < 0;
+                const isOverdue = !j.isCompleted && j.diffDays !== null && j.diffDays < 0;
+                const isCompleted = j.isCompleted || (j.status || '').toLowerCase().includes('closed') || (j.status || '').toLowerCase().includes('completed');
 
                 let dueColor = '#1e40af';
                 let dueBadgeBg = '#eff6ff';
-                if (isToday) {
+                if (isCompleted) {
+                  dueColor = '#15803d';
+                  dueBadgeBg = '#dcfce7';
+                } else if (isToday) {
                   dueColor = '#991b1b';
                   dueBadgeBg = '#fee2e2';
                 } else if (isTomorrow) {
@@ -352,12 +372,16 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
     }).join('');
   };
 
-  // Section 1: Unified Open XL & XXL Deliverables
+  // Section 1: Deliverables
+  const sectionTitle = isEvening 
+    ? '📌 Active & Completed Deliverables (Excl. CTR & Not Required)' 
+    : '📌 Open XL & XXL Deliverables';
+
   const deliverablesSectionHtml = `
     <div style="margin-bottom: 36px;">
       <div style="background: linear-gradient(90deg, #eff6ff 0%, #ffffff 100%); border-left: 4px solid #3b82f6; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;">
         <h3 style="margin: 0; font-size: 15px; color: #1e40af; font-weight: 700; display: flex; align-items: center;">
-          📌 Open XL & XXL Deliverables
+          ${sectionTitle}
           <span style="margin-left: 8px; background: #dbeafe; color: #1e40af; padding: 1px 8px; border-radius: 12px; font-size: 12px; font-weight: 700;">
             ${totalOpenCount}
           </span>
@@ -463,6 +487,10 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
     </div>
   `;
 
+  const headerTitle = isEvening
+    ? `JSR Evening Digest &bull; ${escapedPodName}`
+    : `JSR Executive Digest &bull; ${escapedPodName}`;
+
   const html = `
     <!DOCTYPE html>
     <html>
@@ -478,22 +506,31 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
         <!-- Header -->
         <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 24px; color: #ffffff;">
           <div style="display: flex; align-items: center; margin-bottom: 12px;">
-            <div style="background: #3b82f6; width: 4px; height: 22px; border-radius: 2px; margin-right: 10px;"></div>
+            <div style="background: ${isEvening ? '#8b5cf6' : '#3b82f6'}; width: 4px; height: 22px; border-radius: 2px; margin-right: 10px;"></div>
             <h1 style="margin: 0; font-size: 20px; font-weight: 700; color: #ffffff; letter-spacing: -0.3px;">
-              JSR Executive Digest &bull; ${escapedPodName}
+              ${headerTitle}
             </h1>
           </div>
           
           <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;">
             <span style="background: rgba(59, 130, 246, 0.25); border: 1px solid rgba(59, 130, 246, 0.5); color: #bfdbfe; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
-              📌 ${totalOpenCount} Open Tasks
+              📌 ${totalOpenCount} ${isEvening ? 'Deliverables' : 'Open Tasks'}
             </span>
-            <span style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
-              ⚠️ ${overdueCount} Overdue
-            </span>
-            <span style="background: rgba(249, 115, 22, 0.2); border: 1px solid rgba(249, 115, 22, 0.4); color: #fdba74; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
-              ⚡ ${dueTodayTomorrowCount} Due Soon
-            </span>
+            ${isEvening ? `
+              <span style="background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #a7f3d0; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                ✅ ${completedCount} Completed
+              </span>
+              <span style="background: rgba(249, 115, 22, 0.2); border: 1px solid rgba(249, 115, 22, 0.4); color: #fdba74; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                ⚡ ${activeCount} Active / In Progress
+              </span>
+            ` : `
+              <span style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                ⚠️ ${overdueCount} Overdue
+              </span>
+              <span style="background: rgba(249, 115, 22, 0.2); border: 1px solid rgba(249, 115, 22, 0.4); color: #fdba74; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                ⚡ ${dueTodayTomorrowCount} Due Soon
+              </span>
+            `}
             <span style="background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15); color: #cbd5e1; padding: 4px 10px; border-radius: 20px; font-size: 12px;">
               📅 ${todayStr}
             </span>
@@ -509,7 +546,7 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
         <!-- Footer -->
         <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px 24px; text-align: center;">
           <p style="margin: 0; font-size: 11.5px; color: #94a3b8; line-height: 1.5;">
-            Account Health Tracker Dashboard &bull; Automated Management Digest<br/>
+            Account Health Tracker Dashboard &bull; Automated ${isEvening ? 'Evening' : 'Management'} Digest<br/>
             Delivered exclusively for leadership reviews.
           </p>
         </div>
@@ -523,22 +560,22 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
 }
 
 /**
- * Sends the daily 11:30 AM digest email for a POD or All Teams summary.
+ * Sends the daily digest email for a POD or All Teams summary.
  */
-export async function sendPodDigestEmail({ podName, to, cc, clientReports }) {
+export async function sendPodDigestEmail({ podName, to, cc, clientReports, isEvening = false }) {
   const transport = buildTransportForRecipients(to, cc);
   if (!transport) return false;
 
-  const { subject, html } = buildExecutiveDigestEmailHtml(clientReports, podName);
+  const { subject, html } = buildExecutiveDigestEmailHtml(clientReports, podName, { isEvening });
 
   try {
     const ok = await sendViaSmtp({ ...transport, subject, html });
     if (ok) {
-      console.log(`[emailService] Daily digest email sent for pod "${podName}" to ${transport.toAddresses.map(a => a.email || a).join(', ')}.`);
+      console.log(`[emailService] ${isEvening ? 'Evening' : 'Daily'} digest email sent for pod "${podName}" to ${transport.toAddresses.map(a => a.email || a).join(', ')}.`);
     }
     return ok;
   } catch (err) {
-    console.error(`[emailService] Failed to send daily digest email for pod "${podName}":`, err.message);
+    console.error(`[emailService] Failed to send ${isEvening ? 'evening' : 'daily'} digest email for pod "${podName}":`, err.message);
     return false;
   }
 }

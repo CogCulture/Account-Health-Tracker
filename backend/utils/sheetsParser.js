@@ -221,7 +221,7 @@ export function parseDailyTrackerRows(rows, clientName) {
     const colMap = {
       date: dateIdx, mode: -1, jsrCall: -1,
       jsrName: -1, jsrVerified: -1,
-      clientServicingAttend: -1,
+      clientServicingName: -1, clientServicingAttend: -1,
       designAttend: -1, contentName: -1, strategyName: -1,
       creativeAttend: -1,
       managementAttend: -1, managementName: -1,
@@ -269,12 +269,13 @@ export function parseDailyTrackerRows(rows, clientName) {
         colMap.jsrVerified = idx;
       }
 
-      if (combined.includes('client servicing')) {
-        // Find the "attend" column nearby
-        for (let off = 0; off <= 2 && idx + off <= endCol; off++) {
+      if (combined.includes('client servicing') || combined.includes('client servcing')) {
+        // Find both "name" and "attend" columns under Client Servicing
+        for (let off = 0; off <= 3 && idx + off <= endCol; off++) {
           const checkIdx = idx + off;
-          const isAttend = rows.slice(0, maxHeaderRows).some(r => isAttendSubheader(r[checkIdx]));
-          if (isAttend) { colMap.clientServicingAttend = checkIdx; break; }
+          const colVals = rows.slice(0, maxHeaderRows).map(r => (r[checkIdx] || '').toString().toLowerCase().trim());
+          if (colVals.includes('name') && colMap.clientServicingName === -1) colMap.clientServicingName = checkIdx;
+          if (colVals.some(v => isAttendSubheader(v)) && colMap.clientServicingAttend === -1) colMap.clientServicingAttend = checkIdx;
         }
       }
 
@@ -307,6 +308,10 @@ export function parseDailyTrackerRows(rows, clientName) {
       if (combined.includes('strategy') || combined.includes('stratergy')) {
         colMap.strategyName = idx;
       }
+    }
+
+    if (colMap.jsrName === -1 && colMap.clientServicingName !== -1) {
+      colMap.jsrName = colMap.clientServicingName;
     }
 
     return colMap;
@@ -350,14 +355,16 @@ export function parseDailyTrackerRows(rows, clientName) {
         mode,
         jsrCall,
         clientUnavailable,
-        jsrVerified:         colMap.jsrVerified      !== -1 ? isAttendeeTruthy(row[colMap.jsrVerified])  : false,
-        jsrNameCol:          colMap.jsrName           !== -1 ? row[colMap.jsrName]         : null,
-        creativeAttendCol:   colMap.creativeAttend   !== -1 ? row[colMap.creativeAttend]   : null,
-        managementAttendCol: colMap.managementAttend !== -1 ? row[colMap.managementAttend] : null,
-        managementNameCol:   colMap.managementName   !== -1 ? row[colMap.managementName]   : null,
-        designAttendCol:     colMap.designAttend     !== -1 ? row[colMap.designAttend]     : null,
-        contentNameCol:      colMap.contentName      !== -1 ? row[colMap.contentName]      : null,
-        strategyNameCol:     colMap.strategyName     !== -1 ? row[colMap.strategyName]     : null,
+        jsrVerified:             colMap.jsrVerified             !== -1 ? isAttendeeTruthy(row[colMap.jsrVerified])  : false,
+        jsrNameCol:              colMap.jsrName                  !== -1 ? row[colMap.jsrName]         : null,
+        clientServicingNameCol:   colMap.clientServicingName      !== -1 ? row[colMap.clientServicingName] : null,
+        clientServicingAttendCol: colMap.clientServicingAttend    !== -1 ? row[colMap.clientServicingAttend] : null,
+        creativeAttendCol:       colMap.creativeAttend          !== -1 ? row[colMap.creativeAttend]   : null,
+        managementAttendCol:     colMap.managementAttend        !== -1 ? row[colMap.managementAttend] : null,
+        managementNameCol:       colMap.managementName          !== -1 ? row[colMap.managementName]   : null,
+        designAttendCol:         colMap.designAttend            !== -1 ? row[colMap.designAttend]     : null,
+        contentNameCol:          colMap.contentName             !== -1 ? row[colMap.contentName]      : null,
+        strategyNameCol:         colMap.strategyName            !== -1 ? row[colMap.strategyName]     : null,
         rawRowCells: rawCells,
       });
     });
@@ -429,13 +436,25 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
   const records = [];
   for (let i = hIdx + 1; i < rows.length; i++) {
     const row = rows[i] || [];
+    if (row.length === 0) continue;
+
+    const deliverable = colMap.deliverable !== -1 ? (row[colMap.deliverable] ?? '').toString().trim() : '';
+    const jobType = colMap.jobType !== -1 ? (row[colMap.jobType] ?? '').toString().trim() : '';
+    const status = colMap.status !== -1 ? (row[colMap.status] ?? '').toString().trim() : '';
+    const briefDate = parseExcelDate(colMap.briefDate !== -1 ? row[colMap.briefDate] : null);
+    const clientTimeline = parseExcelDate(colMap.clientTimeline !== -1 ? row[colMap.clientTimeline] : null);
+    const deliveryDate = parseExcelDate(colMap.deliveryDate !== -1 ? row[colMap.deliveryDate] : null);
+    const closingDate = parseExcelDate(colMap.closingDate !== -1 ? row[colMap.closingDate] : null);
+
+    // Skip empty placeholder template rows that only contain an auto-generated Job ID without any actual task info
+    if (!deliverable && !status && !jobType && !briefDate && !clientTimeline && !deliveryDate && !closingDate) {
+      continue;
+    }
     
     let jobId = '';
     if (colMap.jobId !== -1 && row[colMap.jobId]) {
-      jobId = row[colMap.jobId];
+      jobId = row[colMap.jobId].toString().trim();
     } else {
-      const deliverable = colMap.deliverable !== -1 ? row[colMap.deliverable] : '';
-      const jobType = colMap.jobType !== -1 ? row[colMap.jobType] : '';
       if (!deliverable && !jobType && !row[0]) continue;
       jobId = `job-${i}`;
     }
@@ -462,16 +481,16 @@ export function parseJobTrackerRows(rows, clientName, isPanasonic = false) {
 
     records.push({
       jobId,
-      deliverable:        colMap.deliverable        !== -1 ? row[colMap.deliverable]        : '',
-      jobType:            colMap.jobType            !== -1 ? row[colMap.jobType]            : '',
-      status:             colMap.status             !== -1 ? row[colMap.status]             : '',
-      timelineStatus:     colMap.timelineStatus     !== -1 ? row[colMap.timelineStatus]     : '',
-      briefDate:          parseExcelDate(colMap.briefDate      !== -1 ? row[colMap.briefDate]      : null),
-      clientTimeline:     parseExcelDate(colMap.clientTimeline !== -1 ? row[colMap.clientTimeline] : null),
-      deliveryDate:       parseExcelDate(colMap.deliveryDate   !== -1 ? row[colMap.deliveryDate]   : null),
-      closingDate:        parseExcelDate(colMap.closingDate    !== -1 ? row[colMap.closingDate]    : null),
-      priority:           colMap.priority           !== -1 ? row[colMap.priority]           : '',
-      escalation:         colMap.escalation         !== -1 ? row[colMap.escalation]         : '',
+      deliverable,
+      jobType,
+      status,
+      timelineStatus:     colMap.timelineStatus     !== -1 ? (row[colMap.timelineStatus] ?? '').toString().trim() : '',
+      briefDate,
+      clientTimeline,
+      deliveryDate,
+      closingDate,
+      priority:           colMap.priority           !== -1 ? (row[colMap.priority] ?? '').toString().trim().toUpperCase() : '',
+      escalation:         colMap.escalation         !== -1 ? (row[colMap.escalation] ?? '').toString().trim() : '',
       clientAlterations,
     });
   }

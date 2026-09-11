@@ -177,14 +177,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     chrome.storage.local.get(['customBackendUrl'], (stored) => {
       const primaryUrl = stored.customBackendUrl || 'http://localhost:3001/api/meetings/transcript';
-      const fallbackUrl = 'https://account-health-backend.onrender.com/api/meetings/transcript';
 
       sendRequest(primaryUrl)
         .catch(err => {
-          if (primaryUrl !== fallbackUrl) {
-            console.warn('[Meet AI Notetaker] Local backend failed, trying production server...', err.message);
-            return sendRequest(fallbackUrl);
-          }
+          console.warn('[Meet AI Notetaker] Backend request failed:', err.message);
           throw err;
         })
         .then(data => {

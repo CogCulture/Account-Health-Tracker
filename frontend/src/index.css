@@ -1067,32 +1067,80 @@ a:hover {
 
 /* ==========================================
    PENDING JOBS FLOATING BADGE & MODAL
+/* ==========================================
+   PENDING JOBS INLINE BANNER & MODAL
    ========================================== */
-.pending-jobs-floating-badge {
-  position: fixed;
-  top: 1.5rem;
-  right: 1.5rem;
-  z-index: 999;
+.pending-jobs-inline-banner {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  background: rgba(254, 243, 199, 0.9); /* light warm yellow background */
+  justify-content: space-between;
+  gap: 1rem;
+  background: rgba(254, 243, 199, 0.92);
   border: 1px solid rgba(245, 158, 11, 0.4);
-  padding: 0.6rem 1.1rem;
-  border-radius: 30px;
-  font-size: 0.82rem;
-  color: #b45309; /* dark warm orange text */
-  box-shadow: 0 10px 25px -5px rgba(245, 158, 11, 0.2), 0 8px 10px -6px rgba(245, 158, 11, 0.1);
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  animation: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 0.75rem 1.25rem;
+  border-radius: 12px;
+  color: #92400e;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.1);
+  transition: all 0.25s ease;
 }
 
-.pending-jobs-floating-badge:hover {
-  transform: translateY(-2px) scale(1.02);
+.pending-jobs-inline-banner:hover {
   background: rgba(254, 243, 199, 1);
-  box-shadow: 0 20px 25px -5px rgba(245, 158, 11, 0.25), 0 10px 10px -5px rgba(245, 158, 11, 0.15);
+  box-shadow: 0 6px 16px rgba(245, 158, 11, 0.15);
+}
+
+.pending-jobs-action-btn {
+  position: relative;
+}
+
+.pending-jobs-action-btn:hover {
+  background: rgba(245, 158, 11, 0.25) !important;
+  border-color: rgba(245, 158, 11, 0.6) !important;
+  transform: translateY(-1px);
+}
+
+.pending-jobs-hover-tooltip {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.5rem;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  z-index: 1000;
+  width: 260px;
+  pointer-events: none;
+  animation: fadeIn 0.2s ease;
+}
+
+.pending-filter-tab {
+  padding: 0.35rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid var(--card-border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pending-filter-tab.active {
+  background: var(--accent-primary);
+  color: #fff;
+  border-color: var(--accent-primary);
+}
+
+.pending-filter-tab:hover:not(.active) {
+  background: var(--card-bg);
+  color: var(--text-primary);
+  border-color: var(--text-muted);
 }
 
 .badge-pulse-icon {
@@ -1106,13 +1154,12 @@ a:hover {
   border: none;
   color: rgba(180, 83, 9, 0.6);
   cursor: pointer;
-  padding: 0.15rem;
+  padding: 0.2rem;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s ease;
-  margin-left: 0.25rem;
 }
 
 .badge-close-btn:hover {
@@ -1124,8 +1171,8 @@ a:hover {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.6); /* slate-900 back-drop */
-  backdrop-filter: blur(4px);
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(5px);
   z-index: 10000;
   display: flex;
   align-items: center;
@@ -1135,8 +1182,8 @@ a:hover {
 
 .premium-modal-card {
   width: 100%;
-  max-width: 680px;
-  max-height: 85vh; /* constrain height to 85% of screen height */
+  max-width: 780px;
+  max-height: 85vh;
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 16px;
@@ -1153,7 +1200,7 @@ a:hover {
   align-items: center;
   padding: 1.25rem 1.5rem;
   border-bottom: 1px solid var(--card-border);
-  flex-shrink: 0; /* prevent header from shrinking */
+  flex-shrink: 0;
 }
 
 .modal-close-icon-btn {
@@ -1176,8 +1223,8 @@ a:hover {
 
 .modal-body {
   padding: 1.5rem;
-  overflow-y: auto; /* scroll vertically if table content is long */
-  flex: 1; /* expand to take remaining space */
+  overflow-y: auto;
+  flex: 1;
 }
 
 /* Premium Jobs Table */
@@ -1212,7 +1259,7 @@ a:hover {
 }
 
 .premium-jobs-table tr:hover td {
-  background: rgba(0, 0, 0, 0.015);
+  background: rgba(0, 0, 0, 0.02);
 }
 
 .job-id-cell {
@@ -1226,27 +1273,54 @@ a:hover {
 }
 
 .due-date-cell {
-  color: #ef4444;
+  color: var(--text-secondary);
   font-weight: 600;
 }
 
 .size-badge {
   font-weight: 800;
   font-size: 0.68rem;
-  padding: 0.15rem 0.45rem;
+  padding: 0.2rem 0.55rem;
   border-radius: 4px;
   display: inline-block;
   letter-spacing: 0.05em;
-}
-
-.priority-badge-xl {
-  background: rgba(245, 158, 11, 0.12);
-  color: #d97706;
+  text-align: center;
 }
 
 .priority-badge-xxl {
-  background: rgba(20, 184, 166, 0.12);
-  color: #0d9488;
+  background: rgba(139, 92, 246, 0.15);
+  color: #7c3aed;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.priority-badge-xl {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.priority-badge-l {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.priority-badge-m {
+  background: rgba(59, 130, 246, 0.15);
+  color: #2563eb;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.priority-badge-s {
+  background: rgba(16, 185, 129, 0.15);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.priority-badge-other {
+  background: rgba(148, 163, 184, 0.15);
+  color: #64748b;
+  border: 1px solid rgba(148, 163, 184, 0.3);
 }
 
 /* Keyframe animations */

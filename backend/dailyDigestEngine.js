@@ -186,9 +186,122 @@ function normalizeRecipients(recipients) {
   return [...new Set((recipients || []).map(email => email.toString().trim().toLowerCase()).filter(Boolean))].sort();
 }
 
+export function isExcludedEveningStatus(status) {
+  if (!status) return false;
+  const normalized = status.toString().trim().toLowerCase();
+  if (!normalized) return false;
+
+  // Exclude CTR variations
+  if (
+    normalized === 'ctr' ||
+    normalized.includes('client to revert') ||
+    normalized.includes('client revert') ||
+    normalized.startsWith('ctr') ||
+    normalized.endsWith('ctr')
+  ) {
+    return true;
+  }
+
+  // Exclude Not Required variations
+  if (
+    normalized === 'not required' ||
+    normalized === 'not req' ||
+    normalized.includes('not required') ||
+    normalized.includes('not req') ||
+    normalized === 'cancelled' ||
+    normalized === 'canceled' ||
+    normalized === 'n/a' ||
+    normalized === 'na'
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+export function buildEveningDeliverables(jobs, today) {
+  const todayMidnight = toMidnight(today);
+  const deliverables = [];
+
+  for (const job of jobs) {
+    const priority = (job.priority || '').toString().trim().toUpperCase();
+    if (priority !== 'XL' && priority !== 'XXL') continue;
+
+    const rawDeliverable = (job.deliverable || job.jobName || job.task || '').toString().trim();
+    const rawJobId = (job.jobId || '').toString().trim();
+    if (!rawDeliverable && (!rawJobId || rawJobId.startsWith('job-'))) continue;
+
+    const status = (job.status || '').toString().trim();
+    if (!status || status === '-' || status.toLowerCase() === 'n/a') continue;
+    if (isExcludedEveningStatus(status)) continue;
+
+    const statusLower = status.toLowerCase();
+    if (statusLower === 'closed' || statusLower === 'completed') continue;
+
+    let diffDays = null;
+    let dueLabel = '-';
+    let dueDate = '-';
+    let isDueTodayOrTomorrow = false;
+
+    if (job.clientTimeline instanceof Date && !isNaN(job.clientTimeline.getTime())) {
+      const timelineMidnight = toMidnight(job.clientTimeline);
+      diffDays = Math.round((timelineMidnight.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
+      dueDate = formatDateKey(job.clientTimeline);
+      if (diffDays === 0) {
+        dueLabel = 'Today';
+        isDueTodayOrTomorrow = true;
+      } else if (diffDays === 1) {
+        dueLabel = 'Tomorrow';
+        isDueTodayOrTomorrow = true;
+      } else if (diffDays < 0) {
+        dueLabel = `${Math.abs(diffDays)}d Overdue`;
+      } else {
+        dueLabel = `${diffDays}d left`;
+      }
+    }
+
+    let deliveryDate = '-';
+    if (job.deliveryDate instanceof Date && !isNaN(job.deliveryDate.getTime())) {
+      deliveryDate = formatDateKey(job.deliveryDate);
+    } else if (job.deliveryDate && typeof job.deliveryDate === 'string' && job.deliveryDate.trim() !== '') {
+      deliveryDate = job.deliveryDate.trim();
+    }
+
+    deliverables.push({
+      jobId: job.jobId,
+      deliverable: rawDeliverable || job.jobId,
+      priority,
+      status: status || 'In Progress',
+      statusCategory: job.statusAging?.category || '',
+      daysInStatus: job.statusAging?.daysInStatus ?? null,
+      enteredAtFormatted: job.statusAging?.enteredAtFormatted || '',
+      dueDate,
+      dueLabel,
+      deliveryDate,
+      diffDays,
+      isDueTodayOrTomorrow,
+      isCompleted: false,
+      isPanasonic: false,
+    });
+  }
+
+  // Sort: Overdue first (most overdue to least), then Today, Tomorrow, upcoming by due date, then no date
+  deliverables.sort((a, b) => {
+    if (a.diffDays !== null && a.diffDays < 0 && (b.diffDays === null || b.diffDays >= 0)) return -1;
+    if (b.diffDays !== null && b.diffDays < 0 && (a.diffDays === null || a.diffDays >= 0)) return 1;
+    if (a.diffDays !== null && b.diffDays !== null) return a.diffDays - b.diffDays;
+    if (a.diffDays !== null) return -1;
+    if (b.diffDays !== null) return 1;
+    return 0;
+  });
+
+  return deliverables;
+}
+
 function getManagementDigestSignature(snapshot, recipients) {
   const payload = {
     dateKey: snapshot?.dateKey || '',
+    digestType: snapshot?.digestType || 'morning',
     recipients: normalizeRecipients(recipients),
     reports: (snapshot?.consolidatedReports || []).map(report => ({
       podName: report.podName || '',
@@ -335,13 +448,16 @@ function computeMeetingStats(dailyRecords, today) {
   return { elapsedWeekdays, metDays: metDays.size, percentage };
 }
 
-async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manual', today = new Date() } = {}) {
+async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manual', today = new Date(), isEvening = false, digestType = null } = {}) {
   const startedAt = Date.now();
+  const effectiveDigestType = digestType || (isEvening ? 'evening' : 'morning');
+  const isEveningRun = effectiveDigestType === 'evening';
+
   const normalizedFilter = Array.isArray(podNames)
     ? podNames.map(n => n.trim().toUpperCase()).filter(Boolean)
     : null;
 
-  console.log(`[dailyDigestEngine] Building daily snapshot${normalizedFilter ? ` for pods: ${normalizedFilter.join(', ')}` : ''}...`);
+  console.log(`[dailyDigestEngine] Building ${effectiveDigestType} snapshot${normalizedFilter ? ` for pods: ${normalizedFilter.join(', ')}` : ''}...`);
 
   const collection = await getTeamsCollection();
   const allTeams = await collection.find({}).toArray();
@@ -447,7 +563,11 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
             } catch (err) {
               console.warn(`[dailyDigestEngine] Status aging sync failed for "${clientName}": ${err.message}`);
             }
-            pendingJobs = buildPendingJobs(jobs, today).map(job => ({ ...job, isPanasonic }));
+            if (isEveningRun) {
+              pendingJobs = buildEveningDeliverables(jobs, today).map(job => ({ ...job, isPanasonic }));
+            } else {
+              pendingJobs = buildPendingJobs(jobs, today).map(job => ({ ...job, isPanasonic }));
+            }
           }
 
           if (dailyReadError) {
@@ -483,7 +603,11 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
             scoreData = await syncScoreStatusAging(label, scoreData);
 
             const cacheKey = `${clientKey}__${today.getMonth()}__${today.getFullYear()}`;
-            dashboardScores[cacheKey] = scoreData;
+            dashboardScores[cacheKey] = {
+              scores: scoreData.scores,
+              rating: scoreData.rating,
+              clientName: scoreData.clientName || clientName,
+            };
             dashboardClients.push({
               key: clientKey,
               label,
@@ -502,7 +626,9 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
             healthScore: scoreData ? (scoreData.scores?.percentage ?? null) : null,
             rating: scoreData ? scoreData.rating : null,
             scoreData: scoreData ? { scores: scoreData.scores, rating: scoreData.rating } : null,
-            noDeadlineReason: !jobReadError && pendingJobs.length === 0 ? getNoDeadlineReason() : '',
+            noDeadlineReason: !jobReadError && pendingJobs.length === 0 
+              ? (isEveningRun ? 'No active deliverables (excluding CTR & Not Required).' : getNoDeadlineReason()) 
+              : '',
             scanReason,
             attendanceReason,
           });
@@ -562,8 +688,14 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
     }
   }
 
+  const baseDateKey = getSnapshotDateKey(today);
+  const dateKey = isEveningRun ? `${baseDateKey}_evening` : baseDateKey;
+
   return {
-    dateKey: getSnapshotDateKey(today),
+    dateKey,
+    baseDateKey,
+    digestType: effectiveDigestType,
+    isEvening: isEveningRun,
     source,
     timezone: SNAPSHOT_TIMEZONE,
     generatedAt: new Date(),
@@ -578,6 +710,7 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
     diagnostics,
     errors,
     summary: {
+      digestType: effectiveDigestType,
       activeTeamCount: activeTeams.length,
       scannedClientCount,
       consolidatedClientCount: consolidatedReports.length,
@@ -609,13 +742,28 @@ export async function buildAndSaveDailyDigestSnapshot(sheets, options = {}) {
   );
 
   const saved = await snapshots.findOne({ dateKey });
-  console.log(`[dailyDigestEngine] Saved daily snapshot ${dateKey}: ${payload.summary.dashboardScoreCount} score(s), ${payload.summary.consolidatedClientCount} digest client(s), ${payload.summary.errorCount} error(s).`);
+  console.log(`[dailyDigestEngine] Saved ${payload.digestType || 'daily'} snapshot ${dateKey}: ${payload.summary.dashboardScoreCount} score(s), ${payload.summary.consolidatedClientCount} digest client(s), ${payload.summary.errorCount} error(s).`);
   return saved;
 }
 
-export async function getLatestDailyDigestSnapshot({ dateKey = getSnapshotDateKey(), allowLatestFallback = true } = {}) {
+export async function getLatestDailyDigestSnapshot({ dateKey = null, digestType = null, isEvening = false, allowLatestFallback = true } = {}) {
   const snapshots = await getDailyDigestSnapshotsCollection();
-  const todaySnapshot = dateKey ? await snapshots.findOne({ dateKey }) : null;
+  const targetType = digestType || (isEvening ? 'evening' : null);
+
+  if (dateKey) {
+    const directSnapshot = await snapshots.findOne({ dateKey });
+    if (directSnapshot) return directSnapshot;
+  }
+
+  if (targetType === 'evening') {
+    const todayEveningKey = `${getSnapshotDateKey()}_evening`;
+    const todayEvening = await snapshots.findOne({ dateKey: todayEveningKey });
+    if (todayEvening || !allowLatestFallback) return todayEvening;
+    return snapshots.find({ $or: [{ digestType: 'evening' }, { dateKey: /_evening$/ }] }).sort({ generatedAt: -1 }).limit(1).next();
+  }
+
+  const todayMorningKey = getSnapshotDateKey();
+  const todaySnapshot = await snapshots.findOne({ dateKey: todayMorningKey });
   if (todaySnapshot || !allowLatestFallback) return todaySnapshot;
   return snapshots.find({}).sort({ generatedAt: -1 }).limit(1).next();
 }
@@ -640,36 +788,40 @@ export async function sendManagementDigestFromSnapshot(snapshot, { to = null, fo
     return false;
   }
 
+  const isEvening = snapshot.digestType === 'evening' || (snapshot.dateKey || '').endsWith('_evening') || snapshot.isEvening;
   const normalizedRecipients = normalizeRecipients(recipients);
   const signature = getManagementDigestSignature(snapshot, normalizedRecipients);
   const snapshots = await getDailyDigestSnapshotsCollection();
 
   if (!force) {
     const liveSnapshot = await snapshots.findOne({ _id: snapshot._id });
-    const sentDigests = liveSnapshot?.sentManagementDigests || snapshot.sentManagementDigests || [];
+    const historyKey = isEvening ? 'sentEveningDigests' : 'sentManagementDigests';
+    const sentDigests = liveSnapshot?.[historyKey] || snapshot[historyKey] || [];
     const alreadySent = sentDigests.some(item => item?.signature === signature);
 
     if (alreadySent) {
-      console.warn(`[dailyDigestEngine] Management digest ${snapshot.dateKey} already sent to ${normalizedRecipients.join(', ')} with this content. Skipping duplicate send.`);
+      console.warn(`[dailyDigestEngine] ${isEvening ? 'Evening' : 'Management'} digest ${snapshot.dateKey} already sent to ${normalizedRecipients.join(', ')} with this content. Skipping duplicate send.`);
       return { sent: false, skipped: true, reason: 'duplicate', signature };
     }
   }
 
-  console.log(`[dailyDigestEngine] Sending management digest from snapshot ${snapshot.dateKey} to ${normalizedRecipients.join(', ')}...`);
+  console.log(`[dailyDigestEngine] Sending ${isEvening ? 'evening' : 'morning management'} digest from snapshot ${snapshot.dateKey} to ${normalizedRecipients.join(', ')}...`);
   const ok = await sendPodDigestEmail({
     podName: 'All Teams Summary',
     to: normalizedRecipients,
     cc: [],
     clientReports: snapshot.consolidatedReports,
+    isEvening,
   });
 
   if (!ok) return { sent: false, skipped: false, reason: 'email_failed', signature };
 
+  const historyKey = isEvening ? 'sentEveningDigests' : 'sentManagementDigests';
   await snapshots.updateOne(
     { _id: snapshot._id },
     {
       $push: {
-        sentManagementDigests: {
+        [historyKey]: {
           signature,
           recipients: normalizedRecipients,
           sentAt: new Date(),
@@ -681,6 +833,10 @@ export async function sendManagementDigestFromSnapshot(snapshot, { to = null, fo
   );
 
   return { sent: true, skipped: false, signature };
+}
+
+export async function sendEveningDigestFromSnapshot(snapshot, options = {}) {
+  return sendManagementDigestFromSnapshot(snapshot, options);
 }
 
 export async function sendManagementDigestFromLatestSnapshot(options = {}) {
@@ -754,20 +910,23 @@ export async function sendScopedDigestEmailsFromSnapshot(snapshot, { force = fal
       }
     }
 
-    console.log(`[dailyDigestEngine] Sending scoped digest "${podName}" ([${normalizedAllowedPods.join(', ')}]) to ${normalizedRecipients.join(', ')}...`);
+    const isEvening = snapshot.digestType === 'evening' || (snapshot.dateKey || '').endsWith('_evening') || snapshot.isEvening;
+    console.log(`[dailyDigestEngine] Sending ${isEvening ? 'evening ' : ''}scoped digest "${podName}" ([${normalizedAllowedPods.join(', ')}]) to ${normalizedRecipients.join(', ')}...`);
     const ok = await sendPodDigestEmail({
       podName,
       to: normalizedRecipients,
       cc: [],
       clientReports: filteredReports,
+      isEvening,
     });
 
     if (ok) {
+      const historyKey = isEvening ? 'sentScopedEveningDigests' : 'sentScopedDigests';
       await snapshots.updateOne(
         { _id: snapshot._id },
         {
           $push: {
-            sentScopedDigests: {
+            [historyKey]: {
               signature,
               recipients: normalizedRecipients,
               allowedPods: normalizedAllowedPods,
@@ -793,7 +952,7 @@ export async function sendScopedDigestEmailsFromSnapshot(snapshot, { force = fal
  */
 export async function runDailyDigestCheck(sheets, overrideEmail = null) {
   console.log(`[dailyDigestEngine] Starting daily digest check${overrideEmail ? ` (override recipient: ${overrideEmail})` : ''}...`);
-  const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'legacy-digest-check' });
+  const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'legacy-digest-check', digestType: 'morning', isEvening: false });
 
   if (overrideEmail) {
     await sendManagementDigestFromSnapshot(snapshot, { to: overrideEmail });
@@ -805,6 +964,26 @@ export async function runDailyDigestCheck(sheets, overrideEmail = null) {
   await sendManagementDigestFromSnapshot(snapshot);
   await sendScopedDigestEmailsFromSnapshot(snapshot);
   console.log('[dailyDigestEngine] Daily digest check completed.');
+  return snapshot;
+}
+
+/**
+ * Triggers full evening digest workflow: builds evening snapshot
+ * (excluding CTR and Not Required deliverables) and sends evening digest.
+ */
+export async function runEveningDigestCheck(sheets, overrideEmail = null) {
+  console.log(`[dailyDigestEngine] Starting evening digest check${overrideEmail ? ` (override recipient: ${overrideEmail})` : ''}...`);
+  const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'manual-evening-check', digestType: 'evening', isEvening: true });
+
+  if (overrideEmail) {
+    await sendEveningDigestFromSnapshot(snapshot, { to: overrideEmail, force: true });
+    console.log('[dailyDigestEngine] Evening digest check completed for recipient.');
+    return snapshot;
+  }
+
+  await sendEveningDigestFromSnapshot(snapshot);
+  await sendScopedDigestEmailsFromSnapshot(snapshot);
+  console.log('[dailyDigestEngine] Evening digest check completed.');
   return snapshot;
 }
 
