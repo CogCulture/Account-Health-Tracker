@@ -493,7 +493,7 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
 
   const html = `
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -514,23 +514,23 @@ export function buildExecutiveDigestEmailHtml(clientReports, podName = 'All Team
           
           <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;">
             <span style="background: rgba(59, 130, 246, 0.25); border: 1px solid rgba(59, 130, 246, 0.5); color: #bfdbfe; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
-              📌 ${totalOpenCount} ${isEvening ? 'Deliverables' : 'Open Tasks'}
+              📌 ${totalOpenCount} ${isEvening ? 'Active Deliverables' : 'Open Tasks'}
             </span>
-            ${isEvening ? `
-              <span style="background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #a7f3d0; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
-                ✅ ${completedCount} Completed
-              </span>
-              <span style="background: rgba(249, 115, 22, 0.2); border: 1px solid rgba(249, 115, 22, 0.4); color: #fdba74; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
-                ⚡ ${activeCount} Active / In Progress
-              </span>
-            ` : `
+            ${overdueCount > 0 ? `
               <span style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
                 ⚠️ ${overdueCount} Overdue
               </span>
+            ` : ''}
+            ${dueTodayTomorrowCount > 0 ? `
               <span style="background: rgba(249, 115, 22, 0.2); border: 1px solid rgba(249, 115, 22, 0.4); color: #fdba74; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
                 ⚡ ${dueTodayTomorrowCount} Due Soon
               </span>
-            `}
+            ` : ''}
+            ${completedCount > 0 ? `
+              <span style="background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #a7f3d0; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                ✅ ${completedCount} Completed
+              </span>
+            ` : ''}
             <span style="background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15); color: #cbd5e1; padding: 4px 10px; border-radius: 20px; font-size: 12px;">
               📅 ${todayStr}
             </span>
