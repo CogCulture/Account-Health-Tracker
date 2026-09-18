@@ -61,3 +61,13 @@ export async function getDailyDigestSnapshotsCollection() {
   const database = await connectToDatabase();
   return database.collection('dailyDigestSnapshots');
 }
+
+/**
+ * Returns the cronLogs collection instance. Stores detailed execution,
+ * stage progression, and failure logs for all automated cron tasks.
+ */
+export async function getCronLogsCollection() {
+  const database = await connectToDatabase();
+  return database.collection('cronLogs');
+}
+

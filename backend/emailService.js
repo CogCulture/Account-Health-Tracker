@@ -9,9 +9,7 @@ import { getTeamsCollection } from './db.js';
 
 let _transporter = null;
 
-function getTransporter() {
-  if (_transporter) return _transporter;
-
+function createTransporter() {
   const user = process.env.SMTP_USER || 'ahtcog@cogculture.agency';
   const pass = (process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, '');
 
@@ -24,7 +22,7 @@ function getTransporter() {
   const port = Number(process.env.SMTP_PORT) || 465;
   const secure = process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE === 'true' : port === 465;
 
-  _transporter = nodemailer.createTransport({
+  return nodemailer.createTransport({
     host,
     port,
     secure,
@@ -32,8 +30,17 @@ function getTransporter() {
       user,
       pass,
     },
+    // Pool settings to prevent stale socket resets
+    pool: false,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
   });
+}
 
+function getTransporter(forceNew = false) {
+  if (_transporter && !forceNew) return _transporter;
+  _transporter = createTransporter();
   return _transporter;
 }
 
@@ -67,14 +74,9 @@ function formatAddressList(addresses) {
   return [];
 }
 
-export async function sendViaSmtp({ from, fromEmail, fromName, toAddresses, ccAddresses, subject, html }) {
+export async function sendViaSmtp({ from, fromEmail, fromName, toAddresses, ccAddresses, subject, html }, maxRetries = 3) {
   if (process.env.DISABLE_EMAILS === 'true' || process.env.ENABLE_EMAILS === 'false') {
     console.warn('[emailService] Email triggers are currently paused (DISABLE_EMAILS=true). Email not sent.');
-    return false;
-  }
-
-  const transporter = getTransporter();
-  if (!transporter) {
     return false;
   }
 
@@ -102,9 +104,29 @@ export async function sendViaSmtp({ from, fromEmail, fromName, toAddresses, ccAd
     html,
   };
 
-  const info = await transporter.sendMail(mailOptions);
-  console.log(`[emailService] Email sent successfully via Gmail SMTP. MessageId: ${info.messageId}`);
-  return true;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const transporter = getTransporter(attempt > 1);
+      if (!transporter) return false;
+
+      const info = await transporter.sendMail(mailOptions);
+      console.log(`[emailService] Email sent successfully via Gmail SMTP (attempt ${attempt}/${maxRetries}). MessageId: ${info.messageId}`);
+      return true;
+    } catch (err) {
+      console.warn(`[emailService] SMTP send attempt ${attempt}/${maxRetries} failed: ${err.message}`);
+      _transporter = null; // Invalidate cached connection
+      if (attempt < maxRetries) {
+        const delay = attempt * 2000;
+        console.log(`[emailService] Retrying SMTP send in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        console.error(`[emailService] All ${maxRetries} SMTP send attempts failed:`, err.message);
+        return false;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**

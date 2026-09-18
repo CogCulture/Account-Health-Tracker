@@ -66,16 +66,32 @@ function BrandCard({ client, scoreData, loading, onView, large }) {
             overflow:"hidden", textOverflow:"ellipsis", color:"var(--text-primary)" }}>
             {client.label}
           </h3>
-          {scoreData && (
-            <span style={{ display:"inline-block", marginTop:"0.35rem", fontSize: large ? "0.72rem" : "0.68rem", fontWeight:700,
-              color:meta?.color, background:meta?.bg, padding:"2px 8px", borderRadius:99,
+          {scoreData ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem' }}>
+              <span style={{ fontSize: large ? "0.72rem" : "0.68rem", fontWeight:700,
+                color:meta?.color, background:meta?.bg, padding:"2px 8px", borderRadius:99,
+                letterSpacing:"0.04em", textTransform:"uppercase" }}>
+                {scoreData.rating}
+              </span>
+              {loading && (
+                <span style={{ fontSize: "0.65rem", fontWeight: 600, color: "var(--accent-primary)", display: "flex", alignItems: "center", gap: "0.2rem" }}>
+                  <RefreshCw size={9} className="spin" /> Syncing…
+                </span>
+              )}
+            </div>
+          ) : loading ? (
+            <span style={{ display:"inline-block", marginTop:"0.35rem", fontSize: large ? "0.72rem" : "0.68rem", fontWeight:600,
+              color:"var(--accent-primary)", background:"rgba(37,99,235,0.08)", padding:"2px 8px", borderRadius:99,
               letterSpacing:"0.04em", textTransform:"uppercase" }}>
-              {scoreData.rating}
+              Syncing…
             </span>
-          )}
+          ) : null}
         </div>
-        {loading ? (
-          <RefreshCw size={large ? 38 : 32} className="spin" style={{ color:"var(--text-muted)", flexShrink:0 }} />
+        {!scoreData && loading ? (
+          <div style={{ width:ringSize, height:ringSize, borderRadius:"50%", background:"rgba(0,0,0,0.03)",
+            display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <RefreshCw size={large ? 28 : 22} className="spin" style={{ color:"var(--accent-primary)", flexShrink:0 }} />
+          </div>
         ) : scoreData ? (
           <ScoreRing percentage={scoreData.scores.percentage} rating={scoreData.rating} size={ringSize} />
         ) : (
@@ -97,7 +113,9 @@ function BrandCard({ client, scoreData, loading, onView, large }) {
           <StatChip label="Attendance" value={attendPct} large={large} />
         </div>
       ) : loading ? (
-        <div style={{ height: large ? 52 : 40, background:"rgba(0,0,0,0.04)", borderRadius:8 }} />
+        <div style={{ height: large ? 52 : 40, background:"rgba(0,0,0,0.04)", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <span style={{ fontSize:"0.72rem", color:"var(--text-muted)", fontStyle:"italic" }}>Loading live sheet data…</span>
+        </div>
       ) : (
         <div style={{ height: large ? 52 : 40, display:"flex", alignItems:"center", justifyContent:"center" }}>
           <span style={{ fontSize:"0.75rem", color:"var(--text-muted)" }}>Click to load score</span>
@@ -111,9 +129,7 @@ function BrandCard({ client, scoreData, loading, onView, large }) {
   );
 }
 
-export default function OverviewDashboard({ clients, loadStatus, month, year, onSelectClient, clientScores, onBatchLoad, activePairs }) {
-  const [loadingKeys, setLoadingKeys] = useState(new Set());
-  const [hasLoaded,   setHasLoaded]   = useState(false);
+export default function OverviewDashboard({ clients, loadStatus, loadingKeys = new Set(), month, year, onSelectClient, clientScores, onBatchLoad, activePairs }) {
   const [filterRating, setFilterRating] = useState('All');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [selectedTeamId, setSelectedTeamId] = useState('');
@@ -135,22 +151,10 @@ export default function OverviewDashboard({ clients, loadStatus, month, year, on
   };
 
   const triggerBatchLoad = useCallback(() => {
-    const keys = new Set(clients.map(c => c.key));
-    setLoadingKeys(keys);
-    onBatchLoad(clients, (key) => {
-      setLoadingKeys(prev => { const n = new Set(prev); n.delete(key); return n; });
-    });
-    setHasLoaded(true);
-  }, [clients, onBatchLoad]);
-
-  useEffect(() => {
-    if (clients.length > 0 && !hasLoaded) {
-      const missing = clients.some(c => !clientScores[`${c.key}__${month}__${year}`]);
-      if (missing) triggerBatchLoad();
-      else setHasLoaded(true);
+    if (onBatchLoad && clients.length > 0) {
+      onBatchLoad(clients);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clients]);
+  }, [clients, onBatchLoad]);
 
   const totalBrands  = clients.length;
   const loadedScores = clients.filter(c => clientScores[`${c.key}__${month}__${year}`]);

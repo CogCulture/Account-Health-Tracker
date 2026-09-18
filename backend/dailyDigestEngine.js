@@ -1,8 +1,8 @@
 import { parseJobTrackerRows, parseDailyTrackerRows, getCommonClientTabs, parseAssignedPersons } from './utils/sheetsParser.js';
 import { calculateHealthScore } from './utils/scoreEngine.js';
 import { sendPodDigestEmail } from './emailService.js';
-import { getTeamsCollection, getDailyDigestSnapshotsCollection } from './db.js';
-import { POD_RECIPIENTS, SCOPED_DIGEST_CONFIG } from './podConfig.js';
+import { getTeamsCollection, getDailyDigestSnapshotsCollection, getCronLogsCollection } from './db.js';
+import { MANAGEMENT_RECIPIENTS, SCOPED_DIGEST_CONFIG } from './podConfig.js';
 import { syncJobStatusAging } from './jobStatusTracker.js';
 import crypto from 'node:crypto';
 
@@ -471,7 +471,7 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
   const dashboardClients = [];
   const diagnostics = [];
   const errors = [];
-  let combinedCcList = [];
+  const combinedCcList = [...MANAGEMENT_RECIPIENTS];
   let scannedClientCount = 0;
 
   if (activeTeams.length === 0) {
@@ -481,7 +481,6 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
   for (const team of activeTeams) {
     const teamStartedAt = Date.now();
     const podName = (team.name || '').trim().toUpperCase();
-    const recipients = POD_RECIPIENTS[podName];
     const teamDiagnostic = {
       podName,
       teamId: team.id,
@@ -492,18 +491,6 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
     };
 
     diagnostics.push(teamDiagnostic);
-
-    if (!recipients) {
-      const message = `Team "${team.name}" has no matching POD recipient config.`;
-      console.warn(`[dailyDigestEngine] ${message}`);
-      teamDiagnostic.errors.push(message);
-      errors.push({ scope: 'team', podName, message });
-      continue;
-    }
-
-    if (recipients.cc && recipients.cc.length > 0) {
-      combinedCcList = [...new Set([...combinedCcList, ...recipients.cc])];
-    }
 
     console.log(`[dailyDigestEngine] Scanning sheets for pod "${podName}"...`);
     const clientReports = [];
@@ -673,12 +660,6 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
     }
 
     if (clientReports.length > 0) {
-      podEmailsToSend.push({
-        podName,
-        to: recipients.to,
-        clientReports,
-      });
-
       clientReports.forEach(report => {
         consolidatedReports.push({
           ...report,
@@ -702,7 +683,7 @@ async function buildDailyDigestPayload(sheets, { podNames = null, source = 'manu
     month: today.getMonth(),
     year: today.getFullYear(),
     status: errors.length > 0 ? 'partial' : 'ready',
-    podEmailsToSend,
+    podEmailsToSend: [],
     consolidatedReports,
     managementRecipients: combinedCcList,
     dashboardScores,
@@ -768,9 +749,47 @@ export async function getLatestDailyDigestSnapshot({ dateKey = null, digestType 
   return snapshots.find({}).sort({ generatedAt: -1 }).limit(1).next();
 }
 
+/**
+ * Persists structured cron and email execution audit logs to MongoDB.
+ */
+export async function recordCronAuditLog({
+  job,
+  stage = 'execution',
+  status = 'success',
+  dateKey = null,
+  durationMs = 0,
+  details = {},
+  error = null,
+}) {
+  try {
+    const col = await getCronLogsCollection();
+    const logDoc = {
+      job,
+      stage,
+      status,
+      dateKey,
+      timestamp: new Date(),
+      durationMs,
+      details,
+      error: error
+        ? {
+            message: error.message || String(error),
+            code: error.code || null,
+            stack: error.stack || null,
+          }
+        : null,
+    };
+    await col.insertOne(logDoc);
+  } catch (err) {
+    console.error('[cronAuditLog] Failed to persist log:', err.message);
+  }
+}
+
 export async function sendManagementDigestFromSnapshot(snapshot, { to = null, force = false } = {}) {
+  const startedAt = Date.now();
   if (!snapshot) {
     console.warn('[dailyDigestEngine] No snapshot available for management digest.');
+    await recordCronAuditLog({ job: 'management-digest', stage: 'snapshot_validation', status: 'failed', error: new Error('No snapshot provided') });
     return false;
   }
 
@@ -780,11 +799,13 @@ export async function sendManagementDigestFromSnapshot(snapshot, { to = null, fo
 
   if (!recipients.length) {
     console.warn('[dailyDigestEngine] Snapshot has no management recipients. Email not sent.');
+    await recordCronAuditLog({ job: 'management-digest', stage: 'recipient_validation', status: 'failed', dateKey: snapshot.dateKey, error: new Error('No recipients configured') });
     return false;
   }
 
   if (!snapshot.consolidatedReports || snapshot.consolidatedReports.length === 0) {
     console.warn(`[dailyDigestEngine] Snapshot ${snapshot.dateKey} has no consolidated reports. Email not sent.`);
+    await recordCronAuditLog({ job: 'management-digest', stage: 'report_validation', status: 'failed', dateKey: snapshot.dateKey, error: new Error('Snapshot has 0 consolidated reports') });
     return false;
   }
 
@@ -801,6 +822,14 @@ export async function sendManagementDigestFromSnapshot(snapshot, { to = null, fo
 
     if (alreadySent) {
       console.warn(`[dailyDigestEngine] ${isEvening ? 'Evening' : 'Management'} digest ${snapshot.dateKey} already sent to ${normalizedRecipients.join(', ')} with this content. Skipping duplicate send.`);
+      await recordCronAuditLog({
+        job: isEvening ? 'evening-management-digest' : 'morning-management-digest',
+        stage: 'deduplication',
+        status: 'skipped',
+        dateKey: snapshot.dateKey,
+        durationMs: Date.now() - startedAt,
+        details: { reason: 'duplicate_signature', signature, recipients: normalizedRecipients },
+      });
       return { sent: false, skipped: true, reason: 'duplicate', signature };
     }
   }
@@ -814,7 +843,20 @@ export async function sendManagementDigestFromSnapshot(snapshot, { to = null, fo
     isEvening,
   });
 
-  if (!ok) return { sent: false, skipped: false, reason: 'email_failed', signature };
+  const durationMs = Date.now() - startedAt;
+
+  if (!ok) {
+    await recordCronAuditLog({
+      job: isEvening ? 'evening-management-digest' : 'morning-management-digest',
+      stage: 'smtp_transport',
+      status: 'failed',
+      dateKey: snapshot.dateKey,
+      durationMs,
+      details: { recipients: normalizedRecipients, signature },
+      error: new Error('sendPodDigestEmail failed (SMTP transport returned false)'),
+    });
+    return { sent: false, skipped: false, reason: 'email_failed', signature };
+  }
 
   const historyKey = isEvening ? 'sentEveningDigests' : 'sentManagementDigests';
   await snapshots.updateOne(
@@ -832,6 +874,15 @@ export async function sendManagementDigestFromSnapshot(snapshot, { to = null, fo
     }
   );
 
+  await recordCronAuditLog({
+    job: isEvening ? 'evening-management-digest' : 'morning-management-digest',
+    stage: 'completed',
+    status: 'success',
+    dateKey: snapshot.dateKey,
+    durationMs,
+    details: { recipients: normalizedRecipients, signature, reportCount: snapshot.consolidatedReports.length },
+  });
+
   return { sent: true, skipped: false, signature };
 }
 
@@ -844,24 +895,13 @@ export async function sendManagementDigestFromLatestSnapshot(options = {}) {
   return sendManagementDigestFromSnapshot(snapshot, options);
 }
 
+/**
+ * @deprecated Individual POD digest emails are disabled.
+ * Only Executive Management Digest and Scoped Digests are enabled.
+ */
 export async function sendPodDigestsFromSnapshot(snapshot) {
-  if (!snapshot?.podEmailsToSend?.length) {
-    console.log('[dailyDigestEngine] Snapshot has no POD digest emails to send.');
-    return [];
-  }
-
-  const results = [];
-  for (const item of snapshot.podEmailsToSend) {
-    console.log(`[dailyDigestEngine] Sending individual pod digest email for pod "${item.podName}" (${item.clientReports.length} client(s))...`);
-    const success = await sendPodDigestEmail({
-      podName: item.podName,
-      to: item.to,
-      cc: [],
-      clientReports: item.clientReports,
-    });
-    results.push({ podName: item.podName, success });
-  }
-  return results;
+  console.log('[dailyDigestEngine] Individual POD digest emails are disabled. Skipping.');
+  return [];
 }
 
 /**
@@ -876,8 +916,10 @@ export async function sendScopedDigestEmailsFromSnapshot(snapshot, { force = fal
 
   const results = [];
   const snapshots = await getDailyDigestSnapshotsCollection();
+  const isEvening = snapshot.digestType === 'evening' || (snapshot.dateKey || '').endsWith('_evening') || snapshot.isEvening;
 
   for (const scopedConfig of (SCOPED_DIGEST_CONFIG || [])) {
+    const startedAt = Date.now();
     const { to, allowedPods, podName = 'Digest Summary' } = scopedConfig;
     const normalizedRecipients = normalizeRecipients(to);
     if (!normalizedRecipients.length) continue;
@@ -900,17 +942,25 @@ export async function sendScopedDigestEmailsFromSnapshot(snapshot, { force = fal
 
     if (!force) {
       const liveSnapshot = await snapshots.findOne({ _id: snapshot._id });
-      const sentDigests = liveSnapshot?.sentScopedDigests || snapshot.sentScopedDigests || [];
+      const historyKey = isEvening ? 'sentScopedEveningDigests' : 'sentScopedDigests';
+      const sentDigests = liveSnapshot?.[historyKey] || snapshot[historyKey] || [];
       const alreadySent = sentDigests.some(item => item?.signature === signature);
 
       if (alreadySent) {
         console.warn(`[dailyDigestEngine] Scoped digest ${snapshot.dateKey} for [${normalizedAllowedPods.join(', ')}] already sent to ${normalizedRecipients.join(', ')}. Skipping duplicate send.`);
+        await recordCronAuditLog({
+          job: isEvening ? 'evening-scoped-digest' : 'morning-scoped-digest',
+          stage: 'deduplication',
+          status: 'skipped',
+          dateKey: snapshot.dateKey,
+          durationMs: Date.now() - startedAt,
+          details: { podName, allowedPods: normalizedAllowedPods, recipients: normalizedRecipients, signature },
+        });
         results.push({ to: normalizedRecipients, allowedPods: normalizedAllowedPods, sent: false, skipped: true, reason: 'duplicate' });
         continue;
       }
     }
 
-    const isEvening = snapshot.digestType === 'evening' || (snapshot.dateKey || '').endsWith('_evening') || snapshot.isEvening;
     console.log(`[dailyDigestEngine] Sending ${isEvening ? 'evening ' : ''}scoped digest "${podName}" ([${normalizedAllowedPods.join(', ')}]) to ${normalizedRecipients.join(', ')}...`);
     const ok = await sendPodDigestEmail({
       podName,
@@ -919,6 +969,8 @@ export async function sendScopedDigestEmailsFromSnapshot(snapshot, { force = fal
       clientReports: filteredReports,
       isEvening,
     });
+
+    const durationMs = Date.now() - startedAt;
 
     if (ok) {
       const historyKey = isEvening ? 'sentScopedEveningDigests' : 'sentScopedDigests';
@@ -937,8 +989,25 @@ export async function sendScopedDigestEmailsFromSnapshot(snapshot, { force = fal
           $set: { updatedAt: new Date() },
         }
       );
+      await recordCronAuditLog({
+        job: isEvening ? 'evening-scoped-digest' : 'morning-scoped-digest',
+        stage: 'completed',
+        status: 'success',
+        dateKey: snapshot.dateKey,
+        durationMs,
+        details: { podName, allowedPods: normalizedAllowedPods, recipients: normalizedRecipients, signature },
+      });
       results.push({ to: normalizedRecipients, allowedPods: normalizedAllowedPods, sent: true, skipped: false, signature });
     } else {
+      await recordCronAuditLog({
+        job: isEvening ? 'evening-scoped-digest' : 'morning-scoped-digest',
+        stage: 'smtp_transport',
+        status: 'failed',
+        dateKey: snapshot.dateKey,
+        durationMs,
+        details: { podName, allowedPods: normalizedAllowedPods, recipients: normalizedRecipients },
+        error: new Error(`Scoped email to ${normalizedRecipients.join(', ')} failed in SMTP transport`),
+      });
       results.push({ to: normalizedRecipients, allowedPods: normalizedAllowedPods, sent: false, skipped: false, reason: 'email_failed', signature });
     }
   }
@@ -960,7 +1029,6 @@ export async function runDailyDigestCheck(sheets, overrideEmail = null) {
     return snapshot;
   }
 
-  await sendPodDigestsFromSnapshot(snapshot);
   await sendManagementDigestFromSnapshot(snapshot);
   await sendScopedDigestEmailsFromSnapshot(snapshot);
   console.log('[dailyDigestEngine] Daily digest check completed.');
@@ -988,206 +1056,10 @@ export async function runEveningDigestCheck(sheets, overrideEmail = null) {
 }
 
 /**
- * Runs the daily digest check for a specific subset of PODs.
- * Useful for triggering B2B / POD2 emails separately without running all pods.
- *
- * @param {object} sheets    - The google.sheets API client instance
- * @param {string[]} podNames - Array of POD names to process, e.g. ['B2B', 'POD2']
+/**
+ * @deprecated Individual POD digest emails are disabled.
  */
 export async function runDigestForPods(sheets, podNames = []) {
-  const normalizedFilter = podNames.map(n => n.trim().toUpperCase());
-  console.log(`[dailyDigestEngine] Starting digest check for pods: ${normalizedFilter.join(', ')}...`);
-
-  let activeTeams = [];
-  try {
-    const collection = await getTeamsCollection();
-    const teams = await collection.find({}).toArray();
-    activeTeams = teams
-      .filter(t => t.active)
-      .filter(t => normalizedFilter.includes((t.name || '').trim().toUpperCase()));
-  } catch (dbErr) {
-    console.error('[dailyDigestEngine] Failed to fetch active teams from MongoDB:', dbErr.message);
-    return;
-  }
-
-  if (activeTeams.length === 0) {
-    console.log(`[dailyDigestEngine] No active teams found for [${normalizedFilter.join(', ')}]. Skipping.`);
-    return;
-  }
-
-  const today = new Date();
-  const todayMidnight = toMidnight(today);
-
-  const podEmailsToSend = [];
-  const consolidatedReports = [];
-  let combinedCcList = [];
-
-  for (const team of activeTeams) {
-    const podName = (team.name || '').trim().toUpperCase();
-    const recipients = POD_RECIPIENTS[podName];
-    if (!recipients) {
-      console.warn(`[dailyDigestEngine] Team "${team.name}" has no matching POD recipient config. Skipping.`);
-      continue;
-    }
-
-    if (recipients.cc && recipients.cc.length > 0) {
-      combinedCcList = [...new Set([...combinedCcList, ...recipients.cc])];
-    }
-
-    console.log(`[dailyDigestEngine] Scanning sheets for pod "${podName}"...`);
-    const clientReports = [];
-
-    try {
-      const [dailyTabs, jobTabs] = await Promise.all([
-        getSheetTabs(sheets, team.dailyId),
-        getSheetTabs(sheets, team.jobId),
-      ]);
-
-      const commonClients = getCommonClientTabs(dailyTabs, jobTabs);
-
-      for (const clientName of commonClients) {
-        try {
-          const isPanasonic = (clientName || '').toLowerCase().includes('panasonic');
-
-          let rawJobs = null;
-          let rawDaily = null;
-          let jobReadError = null;
-          let dailyReadError = null;
-
-          try {
-            rawJobs = await getSheetData(sheets, team.jobId, clientName, jobTabs);
-          } catch (err) {
-            jobReadError = err;
-          }
-
-          try {
-            rawDaily = await getSheetData(sheets, team.dailyId, clientName, dailyTabs);
-          } catch (err) {
-            dailyReadError = err;
-          }
-
-          let pendingJobs = [];
-          let dailyRecords = [];
-          let meetingStats = getDefaultMeetingStats();
-          let scanReason = null;
-          let attendanceReason = null;
-
-          let jobs = [];
-          if (jobReadError) {
-            scanReason = getScanFailureReason(jobReadError);
-            console.error(`[dailyDigestEngine] Failed to read Job Tracker for "${clientName}" on pod "${podName}":`, jobReadError.message);
-          } else {
-            jobs = parseJobTrackerRows(rawJobs, clientName, isPanasonic);
-            try {
-              jobs = await syncJobStatusAging(clientName, jobs);
-            } catch (err) {
-              console.warn(`[dailyDigestEngine] Status aging sync failed for "${clientName}": ${err.message}`);
-            }
-            pendingJobs = buildPendingJobs(jobs, today).map(job => ({ ...job, isPanasonic }));
-          }
-
-          if (dailyReadError) {
-            attendanceReason = getScanFailureReason(dailyReadError);
-            meetingStats = { ...getDefaultMeetingStats(), reason: attendanceReason };
-            console.error(`[dailyDigestEngine] Failed to read Daily Tracker for "${clientName}" on pod "${podName}":`, dailyReadError.message);
-          } else {
-            try {
-              dailyRecords = parseDailyTrackerRows(rawDaily, clientName);
-              meetingStats = computeMeetingStats(dailyRecords, today);
-            } catch (dailyErr) {
-              attendanceReason = `Could not parse daily meeting tracker: ${dailyErr.message}`;
-              meetingStats = { ...getDefaultMeetingStats(), reason: attendanceReason };
-              console.error(`[dailyDigestEngine] Failed to parse Daily Tracker for "${clientName}":`, dailyErr.message);
-            }
-          }
-
-          let scoreData = null;
-          if (!jobReadError && !dailyReadError) {
-            const assignedPersons = parseAssignedPersons(rawDaily);
-            scoreData = calculateHealthScore(
-              dailyRecords,
-              jobs,
-              clientName,
-              today.getMonth(),
-              today.getFullYear(),
-              podName,
-              assignedPersons
-            );
-          }
-
-          clientReports.push({
-            clientName,
-            podName,
-            pendingJobs,
-            meetingStats,
-            healthScore: scoreData ? (scoreData.scores?.percentage ?? null) : null,
-            rating: scoreData ? scoreData.rating : null,
-            scoreData: scoreData ? { scores: scoreData.scores, rating: scoreData.rating } : null,
-            noDeadlineReason: !jobReadError && pendingJobs.length === 0 ? getNoDeadlineReason() : '',
-            scanReason,
-            attendanceReason,
-          });
-        } catch (clientErr) {
-          console.error(`[dailyDigestEngine] Failed to scan client "${clientName}" on pod "${podName}":`, clientErr.message);
-          clientReports.push({
-            clientName,
-            pendingJobs: [],
-            meetingStats: getDefaultMeetingStats(),
-            scanReason: getScanFailureReason(clientErr),
-            attendanceReason: 'Daily meeting attendance could not be read because this brand scan failed.',
-          });
-        }
-      }
-    } catch (teamErr) {
-      console.error(`[dailyDigestEngine] Failed to scan pod "${podName}":`, teamErr.message);
-      clientReports.push({
-        clientName: `${podName} pod`,
-        pendingJobs: [],
-        meetingStats: getDefaultMeetingStats(),
-        scanReason: getScanFailureReason(teamErr),
-        attendanceReason: 'Daily meeting attendance could not be read because this pod could not be scanned.',
-      });
-    }
-
-    if (clientReports.length > 0) {
-      podEmailsToSend.push({
-        podName,
-        to: recipients.to,
-        clientReports,
-      });
-
-      clientReports.forEach(report => {
-        consolidatedReports.push({
-          ...report,
-          podName,
-        });
-      });
-    }
-  }
-
-  // 1. Send individual pod emails
-  for (const item of podEmailsToSend) {
-    console.log(`[dailyDigestEngine] Sending individual pod digest email for pod "${item.podName}" (${item.clientReports.length} client(s))...`);
-    await sendPodDigestEmail({
-      podName: item.podName,
-      to: item.to,
-      cc: [],
-      clientReports: item.clientReports,
-    });
-  }
-
-  // 2. Send consolidated email to management
-  if (consolidatedReports.length > 0 && combinedCcList.length > 0) {
-    console.log(`[dailyDigestEngine] Sending single consolidated daily digest email to CC list (${consolidatedReports.length} total client(s))...`);
-    await sendPodDigestEmail({
-      podName: 'All Teams Summary',
-      to: combinedCcList,
-      cc: [],
-      clientReports: consolidatedReports,
-    });
-  } else {
-    console.log('[dailyDigestEngine] No consolidated daily digest data or CC recipients found.');
-  }
-
-  console.log(`[dailyDigestEngine] Digest check for [${normalizedFilter.join(', ')}] completed.`);
+  console.warn('[dailyDigestEngine] runDigestForPods is deprecated. Individual POD digest emails are disabled. Please use the Executive Management Digest or Scoped Digests.');
 }
+

@@ -1,5 +1,4 @@
-import 'dotenv/config';
-import { getLatestDailyDigestSnapshot, sendManagementDigestFromSnapshot, sendScopedDigestEmailsFromSnapshot, sendPodDigestsFromSnapshot } from './dailyDigestEngine.js';
+import { getLatestDailyDigestSnapshot, sendManagementDigestFromSnapshot, sendScopedDigestEmailsFromSnapshot } from './dailyDigestEngine.js';
 
 async function main() {
   console.log('[send-all-digests] Fetching latest daily digest snapshot from MongoDB...');
@@ -20,11 +19,7 @@ async function main() {
   const scopedRes = await sendScopedDigestEmailsFromSnapshot(snapshot, { force: true });
   console.log('[send-all-digests] Scoped digests result:', scopedRes);
 
-  console.log('\n--- 3. Sending Individual POD Digest Emails ---');
-  const podRes = await sendPodDigestsFromSnapshot(snapshot);
-  console.log('[send-all-digests] Pod digests result:', podRes);
-
-  console.log('\n✅ [send-all-digests] All daily digest emails have been processed and dispatched!');
+  console.log('\n✅ [send-all-digests] Management and scoped daily digest emails have been processed and dispatched!');
 }
 
 main().catch(err => {

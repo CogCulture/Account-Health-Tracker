@@ -8,8 +8,20 @@
 
 export const ALLOWED_TEAM_NAMES = ['POD1', 'POD2', 'PANASONIC', 'B2B', 'POD4', 'SRHU'];
 
-// Always CC'd on every pod digest email / Management Digest.
-const ALWAYS_CC = ['vaibhav@cogculture.agency', 'ashok@cogculture.agency', 'shourya@cogculture.agency', 'pallave@cogculture.agency', 'apoorv@cogculture.agency', 'tanushree@cogculture.agency'];
+/**
+ * Executive Management Recipients (All Teams Summary).
+ * Receives the full company-wide daily morning and evening executive digests.
+ */
+export const MANAGEMENT_RECIPIENTS = [
+  'apoorv@cogculture.agency',
+  'ashok@cogculture.agency',
+  'pallave@cogculture.agency',
+  'shourya@cogculture.agency',
+  'tanushree@cogculture.agency',
+  'vaibhav@cogculture.agency',
+];
+
+export const ALWAYS_CC = MANAGEMENT_RECIPIENTS;
 
 /**
  * Scoped digest configurations for recipients who should only receive
@@ -28,30 +40,10 @@ export const SCOPED_DIGEST_CONFIG = [
   },
 ];
 
-export const POD_RECIPIENTS = {
-  POD1: {
-    to: ['nandy@cogculture.agency', 'naveen@cogculture.agency', 'deepakshi@cogculture.agency'],
-    cc: ALWAYS_CC,
-  },
-  POD2: {
-    to: ['vishal@cogculture.agency', 'deepakshi@cogculture.agency'],
-    cc: ALWAYS_CC,
-  },
-  PANASONIC: {
-    to: ['dixitsethi@cogculture.agency', 'gitika@cogculture.agency'],
-    cc: ALWAYS_CC,
-  },
-  B2B: {
-    to: ['sunny@cogculture.agency', 'khushi@cogculture.agency'],
-    cc: ALWAYS_CC,
-  },
-  POD4: {
-    to: ['vishakh@cogculture.agency', 'vishal@cogculture.agency', 'deepakshi@cogculture.agency'],
-    cc: ALWAYS_CC,
-  },
-  SRHU: {
-    to: [],
-    cc: ALWAYS_CC,
-  },
-};
+/**
+ * @deprecated Individual POD digest emails are disabled.
+ * Only Executive Management Digest and Scoped Digests are actively sent.
+ */
+export const POD_RECIPIENTS = {};
+
 

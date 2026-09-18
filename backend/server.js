@@ -21,11 +21,12 @@ import {
   getLatestDailyDigestSnapshot, 
   sendManagementDigestFromSnapshot, 
   sendEveningDigestFromSnapshot,
-  sendScopedDigestEmailsFromSnapshot 
+  sendScopedDigestEmailsFromSnapshot,
+  recordCronAuditLog
 } from './dailyDigestEngine.js';
 import { syncJobStatusAging } from './jobStatusTracker.js';
 import { sendDailyReminderEmail } from './emailService.js';
-import { getTeamsCollection, getMeetingInsightsCollection } from './db.js';
+import { getTeamsCollection, getMeetingInsightsCollection, getCronLogsCollection } from './db.js';
 import { ALLOWED_TEAM_NAMES } from './podConfig.js';
 import { transcribeAudio, extractMeetingInsights } from './mistralService.js';
 import { listRecentMeetings, meetingTranscriptToText } from './fathomService.js';
@@ -918,6 +919,22 @@ app.post('/api/evening-digest-snapshot/send', alertTriggerLimiter, async (req, r
   }
 });
 
+/**
+ * GET /api/cron/logs
+ * Returns recent execution and error audit logs for automated daily digest crons from MongoDB.
+ */
+app.get('/api/cron/logs', async (req, res) => {
+  try {
+    const col = await getCronLogsCollection();
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const logs = await col.find({}).sort({ timestamp: -1 }).limit(limit).toArray();
+    res.json({ success: true, count: logs.length, logs });
+  } catch (err) {
+    console.error('[server] GET /api/cron/logs error:', err);
+    res.status(500).json({ error: 'Failed to retrieve cron logs.' });
+  }
+});
+
 // ── Background Cron Scheduler ──────────────────────────────────────────────
 const isCronEnabled = process.env.ENABLE_EMAIL_CRON !== 'false';
 
@@ -926,12 +943,29 @@ if (isCronEnabled) {
 
   // Scheduled daily 11:00 AM snapshot update from live Google Sheets (IST Timezone)
   cron.schedule('0 11 * * *', async () => {
+    const startedAt = Date.now();
     console.log('[cron] Running scheduled daily 11:00 AM snapshot update...');
+    await recordCronAuditLog({ job: 'cron-11am-build', stage: 'started', status: 'started' });
     try {
       const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'cron-11am-build', today: new Date(), digestType: 'morning', isEvening: false });
       console.log(`[cron] Daily 11:00 AM snapshot build completed for dateKey: ${snapshot.dateKey}`);
+      await recordCronAuditLog({
+        job: 'cron-11am-build',
+        stage: 'completed',
+        status: 'success',
+        dateKey: snapshot.dateKey,
+        durationMs: Date.now() - startedAt,
+        details: snapshot.summary,
+      });
     } catch (err) {
       console.error('[cron] Scheduled 11:00 AM snapshot update failed:', err.message);
+      await recordCronAuditLog({
+        job: 'cron-11am-build',
+        stage: 'build_failed',
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        error: err,
+      });
     }
   }, {
     scheduled: true,
@@ -940,7 +974,9 @@ if (isCronEnabled) {
 
   // Scheduled daily 11:30 AM management digest email trigger (IST Timezone)
   cron.schedule('30 11 * * *', async () => {
+    const startedAt = Date.now();
     console.log('[cron] Running scheduled daily 11:30 AM management digest email trigger...');
+    await recordCronAuditLog({ job: 'cron-1130am-email-trigger', stage: 'started', status: 'started' });
     try {
       let snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: false, digestType: 'morning', isEvening: false });
       if (!snapshot) {
@@ -950,6 +986,7 @@ if (isCronEnabled) {
 
       if (!snapshot) {
         console.warn('[cron] 11:30 AM management mail skipped: Could not build or fetch snapshot.');
+        await recordCronAuditLog({ job: 'cron-1130am-email-trigger', stage: 'snapshot_missing', status: 'failed', error: new Error('Snapshot not found') });
         return;
       }
 
@@ -960,8 +997,74 @@ if (isCronEnabled) {
       console.log(`[cron] Triggering 11:30 AM scoped digest emails for configured scoped recipients...`);
       const scopedResults = await sendScopedDigestEmailsFromSnapshot(snapshot, { force: false });
       console.log('[cron] Scheduled 11:30 AM scoped digest emails result:', scopedResults);
+
+      await recordCronAuditLog({
+        job: 'cron-1130am-email-trigger',
+        stage: 'completed',
+        status: result?.sent || scopedResults?.some(r => r.sent) ? 'success' : 'completed',
+        dateKey: snapshot.dateKey,
+        durationMs: Date.now() - startedAt,
+        details: { managementResult: result, scopedResults },
+      });
     } catch (err) {
       console.error('[cron] Scheduled 11:30 AM management email trigger failed:', err.message);
+      await recordCronAuditLog({
+        job: 'cron-1130am-email-trigger',
+        stage: 'dispatch_failed',
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        error: err,
+      });
+    }
+  }, {
+    scheduled: true,
+    timezone: "Asia/Kolkata"
+  });
+
+  // ── TEMPORARY Test Cron for Today at 2:15 PM IST ───────────────────────────
+  // Sends exclusively to tanushree@cogculture.agency to verify automated cron execution & logging.
+  cron.schedule('15 14 * * *', async () => {
+    const startedAt = Date.now();
+    console.log('[cron-test-215pm] Running temporary automated test cron at 2:15 PM IST...');
+    await recordCronAuditLog({
+      job: 'temporary-test-cron-215pm',
+      stage: 'started',
+      status: 'started',
+      details: { target: 'tanushree@cogculture.agency', scheduledTime: '14:15 IST' }
+    });
+
+    try {
+      let snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: true, digestType: 'morning', isEvening: false });
+      if (!snapshot) {
+        console.log('[cron-test-215pm] Snapshot not found. Building fresh snapshot now...');
+        snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: 'cron-215pm-test-build', today: new Date(), digestType: 'morning', isEvening: false });
+      }
+
+      console.log(`[cron-test-215pm] Triggering test digest email to tanushree@cogculture.agency for snapshot: ${snapshot.dateKey}...`);
+      const result = await sendManagementDigestFromSnapshot(snapshot, {
+        to: ['tanushree@cogculture.agency'],
+        force: true
+      });
+      console.log('[cron-test-215pm] Test cron execution completed:', result);
+
+      await recordCronAuditLog({
+        job: 'temporary-test-cron-215pm',
+        stage: 'completed',
+        status: result?.sent ? 'success' : 'failed',
+        dateKey: snapshot.dateKey,
+        durationMs: Date.now() - startedAt,
+        details: { result, target: 'tanushree@cogculture.agency' },
+      });
+    } catch (err) {
+      console.error('[cron-test-215pm] Test cron execution failed:', err.message);
+      await recordCronAuditLog({
+        job: 'temporary-test-cron-215pm',
+        stage: 'execution_failed',
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        error: err,
+        details: { target: 'tanushree@cogculture.agency' }
+      });
     }
   }, {
     scheduled: true,
@@ -1011,11 +1114,87 @@ if (isCronEnabled) {
     scheduled: true,
     timezone: "Asia/Kolkata"
   });
+
+  // ── Self-Healing Catch-Up: Runs every 10 minutes ───────────────────────────
+  // If the server was sleeping / spinning down at the exact minute of 11:30 AM or 7:15 PM,
+  // this catch-up verifies whether today's digest was sent. If missed, it auto-dispatches it.
+  cron.schedule('*/10 * * * *', async () => {
+    await checkAndCatchUpMissedDigests('heartbeat-10min');
+  }, {
+    scheduled: true,
+    timezone: "Asia/Kolkata"
+  });
 } else {
   console.warn('[cron] Automated cron tasks are currently DISABLED (ENABLE_EMAIL_CRON=false).');
 }
 
+/**
+ * Self-healing catch-up runner. Checks if the scheduled dispatch time has passed
+ * and automatically sends today's digest if it was missed due to server inactivity/sleep.
+ */
+async function checkAndCatchUpMissedDigests(reason = 'periodic-check') {
+  if (process.env.ENABLE_EMAIL_CRON === 'false') return;
+
+  const now = new Date();
+  const istTimeStr = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(now);
+
+  const [hourStr, minStr] = istTimeStr.split(':');
+  const hour = parseInt(hourStr, 10);
+  const minute = parseInt(minStr, 10);
+  const totalMinutes = hour * 60 + minute;
+
+  // 1. Morning Catch-up: Between 11:30 AM and 6:30 PM IST (690m to 1110m)
+  if (totalMinutes >= 690 && totalMinutes < 1110) {
+    try {
+      let snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: false, digestType: 'morning', isEvening: false });
+      const sentCount = (snapshot?.sentManagementDigests || []).length;
+      if (sentCount === 0) {
+        console.log(`[cron/catch-up] (${reason}) It is past 11:30 AM IST and morning digest was not sent today. Auto-dispatching now...`);
+        if (!snapshot) {
+          snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: `catchup-${reason}`, today: now, digestType: 'morning', isEvening: false });
+        }
+        if (snapshot) {
+          await sendManagementDigestFromSnapshot(snapshot, { force: false });
+          await sendScopedDigestEmailsFromSnapshot(snapshot, { force: false });
+        }
+      }
+    } catch (err) {
+      console.error(`[cron/catch-up] Morning catch-up failed (${reason}):`, err.message);
+    }
+  }
+
+  // 2. Evening Catch-up: Between 7:15 PM and 11:59 PM IST (1155m to 1439m)
+  if (totalMinutes >= 1155) {
+    try {
+      let snapshot = await getLatestDailyDigestSnapshot({ allowLatestFallback: false, digestType: 'evening', isEvening: true });
+      const sentCount = (snapshot?.sentEveningDigests || []).length;
+      if (sentCount === 0) {
+        console.log(`[cron/catch-up] (${reason}) It is past 7:15 PM IST and evening digest was not sent today. Auto-dispatching now...`);
+        if (!snapshot) {
+          snapshot = await buildAndSaveDailyDigestSnapshot(sheets, { source: `catchup-evening-${reason}`, today: now, isEvening: true, digestType: 'evening' });
+        }
+        if (snapshot) {
+          await sendEveningDigestFromSnapshot(snapshot, { force: false });
+          await sendScopedDigestEmailsFromSnapshot(snapshot, { force: false });
+        }
+      }
+    } catch (err) {
+      console.error(`[cron/catch-up] Evening catch-up failed (${reason}):`, err.message);
+    }
+  }
+}
+
 // ── Start ────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`[server] Account Health API running at http://localhost:${PORT}`);
+  // Check on server boot if any scheduled digest was missed while offline
+  setTimeout(() => {
+    checkAndCatchUpMissedDigests('server-boot');
+  }, 3000);
 });
+

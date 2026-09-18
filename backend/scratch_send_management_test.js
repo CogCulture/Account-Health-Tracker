@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
-import { buildAndSaveDailyDigestSnapshot, sendEveningDigestFromSnapshot } from './dailyDigestEngine.js';
+import { buildAndSaveDailyDigestSnapshot, getLatestDailyDigestSnapshot, sendEveningDigestFromSnapshot } from './dailyDigestEngine.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -29,30 +29,37 @@ const sheets = google.sheets({ version: 'v4', auth });
 
 async function runLiveEveningDigest() {
   const recipients = [
-    'apoorv@cogculture.agency',
     'ashok@cogculture.agency',
     'pallave@cogculture.agency',
     'shourya@cogculture.agency',
     'tanushree@cogculture.agency',
     'vaibhav@cogculture.agency',
   ];
-  console.log('[live-evening-email] Starting LIVE scan of Google Sheets across all brands for Evening Digest (XL/XXL only, excluding CTR & Not Required)...');
-  console.log('[live-evening-email] Destination recipients:', recipients);
+  console.log('[live-evening-email] Sending Evening Digest to recipients:', recipients);
 
-  // 1. Build live evening snapshot from Google Sheets (excluding CTR & Not Required)
-  const snapshot = await buildAndSaveDailyDigestSnapshot(sheets, {
-    source: 'live-evening-test-trigger',
-    today: new Date(),
-    isEvening: true,
+  // 1. Get latest evening snapshot (or build if not present)
+  let snapshot = await getLatestDailyDigestSnapshot({
     digestType: 'evening',
+    isEvening: true,
+    allowLatestFallback: true,
   });
 
   if (!snapshot || !snapshot.consolidatedReports || snapshot.consolidatedReports.length === 0) {
-    console.error('[live-evening-email] Failed to generate snapshot from Google Sheets.');
+    console.log('[live-evening-email] No cached snapshot found, building fresh snapshot from Google Sheets...');
+    snapshot = await buildAndSaveDailyDigestSnapshot(sheets, {
+      source: 'live-evening-send',
+      today: new Date(),
+      isEvening: true,
+      digestType: 'evening',
+    });
+  }
+
+  if (!snapshot || !snapshot.consolidatedReports || snapshot.consolidatedReports.length === 0) {
+    console.error('[live-evening-email] Failed to obtain snapshot.');
     process.exit(1);
   }
 
-  console.log(`[live-evening-email] Snapshot built successfully (${snapshot.dateKey}) with ${snapshot.consolidatedReports.length} brand reports.`);
+  console.log(`[live-evening-email] Using snapshot (${snapshot.dateKey}) with ${snapshot.consolidatedReports.length} brand reports.`);
   
   let totalDeliverables = 0;
   snapshot.consolidatedReports.forEach(r => {

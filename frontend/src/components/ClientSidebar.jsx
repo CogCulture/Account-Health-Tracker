@@ -31,6 +31,7 @@ export default function ClientSidebar({
   clients,
   activePairs,
   loadStatus,
+  loadingKeys,
   onLoadClients,
   activeView,
 }) {
@@ -269,6 +270,7 @@ export default function ClientSidebar({
                     }}>
                       {groupFiltered.map(client => {
                         const score  = clientScores[`${client.key}__${month}__${year}`];
+                        const isClientLoading = loadingKeys?.has(client.key);
                         const active = client.key === selectedClient && activeView === 'dashboard';
                         const color  = score ? (RATING_COLORS[score.rating] || '#EF4444') : null;
                         const isProj = isProjectBrand(client.label);
@@ -301,9 +303,12 @@ export default function ClientSidebar({
                                   {isProj ? 'PROJ' : 'RET'}
                                 </span>
                               </div>
-                              {score ? (
-                                <span style={{ fontSize: '0.78rem', fontWeight: 700, color, flexShrink: 0 }}>
+                              {isClientLoading && !score ? (
+                                <RefreshCw size={12} className="spin" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                              ) : score ? (
+                                <span style={{ fontSize: '0.78rem', fontWeight: 700, color, flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                                   {score.percentage}%
+                                  {isClientLoading && <RefreshCw size={9} className="spin" style={{ opacity: 0.6 }} />}
                                 </span>
                               ) : (
                                 <ChevronRight size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
